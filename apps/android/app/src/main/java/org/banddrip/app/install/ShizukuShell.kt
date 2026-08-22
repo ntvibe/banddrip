@@ -26,7 +26,7 @@ object ShizukuShell {
         val permissionGranted: Boolean,
     )
 
-    data class Result(
+    data class ShellResult(
         val exitCode: Int,
         val stdout: String,
         val stderr: String,
@@ -46,26 +46,26 @@ object ShizukuShell {
         return Status(installed, alive, granted)
     }
 
-    fun requestPermission(): Result<Unit> = runCatching {
+    fun requestPermission(): kotlin.Result<Unit> = runCatching {
         check(Shizuku.pingBinder()) { "Shizuku is not running" }
         Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
     }
 
-    fun openManager(context: Context): Result<Unit> = runCatching {
+    fun openManager(context: Context): kotlin.Result<Unit> = runCatching {
         val launch = context.packageManager.getLaunchIntentForPackage(BandBundleManager.SHIZUKU_PACKAGE)
             ?: error("Shizuku is not installed")
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launch)
     }
 
-    fun openDownloadPage(context: Context): Result<Unit> = runCatching {
+    fun openDownloadPage(context: Context): kotlin.Result<Unit> = runCatching {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
     }
 
-    suspend fun run(vararg command: String): Result = withContext(Dispatchers.IO) {
+    suspend fun run(vararg command: String): ShellResult = withContext(Dispatchers.IO) {
         check(Shizuku.pingBinder()) { "Shizuku is not running" }
         check(Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
             "BandDrip has not been granted Shizuku permission"
@@ -91,7 +91,7 @@ object ShizukuShell {
             val stdout = async(Dispatchers.IO) { stdoutStream.bufferedReader().use { it.readText() } }
             val stderr = async(Dispatchers.IO) { stderrStream.bufferedReader().use { it.readText() } }
             val exitCode = remoteClass.getMethod("waitFor").invoke(remote) as Int
-            Result(
+            ShellResult(
                 exitCode = exitCode,
                 stdout = stdout.await().trim(),
                 stderr = stderr.await().trim(),
