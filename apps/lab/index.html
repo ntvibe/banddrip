@@ -12,71 +12,70 @@
     <header class="hero">
       <div>
         <p class="eyebrow">BANDDRIP LAB</p>
-        <h1>Real firmware preview</h1>
-        <p class="lede">The primary preview below is not drawn by this webpage. Each frame is captured from Xiaomi's real Vela/NuttX firmware running under QEMU in GitHub Actions after BandDrip's RPK is installed and launched.</p>
+        <h1>Smart Band 10 preview</h1>
+        <p class="lede">Fast interactive preview of BandDrip at the Xiaomi Smart Band 10 target geometry. Change glucose, trend, delta, age and IOB to test the display before physical-band validation.</p>
       </div>
-      <div id="firmwareBadge" class="badge neutral">Real Vela firmware: loading evidence…</div>
+      <div class="badge good">Lightweight preview · 212×520 target</div>
     </header>
 
-    <section class="real-grid">
-      <aside class="panel real-controls">
-        <p class="section-label">REAL XIAOMI VELA/QEMU</p>
-        <h2>Firmware snapshots</h2>
-        <p id="realMeta" class="muted">Loading latest emulator run…</p>
-        <div id="realFixtures" class="fixtures real-fixtures"></div>
-        <a class="run-link" href="https://github.com/ntvibe/banddrip/actions/workflows/real-firmware-pages.yml" target="_blank" rel="noreferrer">Run a new real-firmware preview ↗</a>
-        <p class="rule">A static public page cannot safely store a GitHub write token, so custom reruns open the authenticated GitHub Action. Preset snapshots shown here are actual emulator output.</p>
+    <section class="grid panel">
+      <aside class="controls">
+        <label>Device<select id="device"></select></label>
+        <div class="two">
+          <label>Glucose<input id="glucose" type="number" value="112" min="1" step="1" /></label>
+          <label>Units<select id="units"><option>mg/dL</option><option>mmol/L</option></select></label>
+        </div>
+        <div class="two">
+          <label>Trend<select id="trend"><option value="↑">↑</option><option value="↗">↗</option><option value="→" selected>→</option><option value="↘">↘</option><option value="↓">↓</option></select></label>
+          <label>Delta<input id="delta" type="number" value="6" step="0.1" /></label>
+        </div>
+        <label>Reading age <span id="ageValue">3m</span><input id="age" type="range" min="0" max="90" value="3" /></label>
+        <div class="two align-end">
+          <label>IOB<input id="iob" type="number" value="0.250" min="0" step="0.001" /></label>
+          <label class="check"><input id="showIob" type="checkbox" checked /> Show IOB</label>
+        </div>
+        <p class="rule"><strong>Hard rule:</strong> 10+ minutes turns glucose red + struck through while exact age remains visible.</p>
       </aside>
 
-      <section class="panel real-stage">
-        <div class="real-frame-shell">
-          <img id="realFrame" alt="BandDrip rendered by Xiaomi Vela firmware emulator" />
-          <div id="realMissing" class="real-missing">No real-firmware screenshot has been published yet.</div>
-        </div>
-        <div id="realCaption" class="device-info"></div>
+      <section class="stage">
+        <div class="device-wrap"><div id="screen" class="screen">
+          <div class="glucose-row"><span id="glucoseOut">112</span><span id="trendOut">→</span></div>
+          <div class="meta-row"><span id="deltaOut">+6</span><span class="dot">·</span><span id="ageOut">3m ago</span></div>
+          <div id="iobOut" class="iob-row">IOB 0.250 U</div>
+          <div class="clock">13:44</div>
+        </div></div>
+        <div id="deviceInfo" class="device-info"></div>
       </section>
     </section>
 
     <details class="approx panel">
-      <summary>Open fast browser approximation</summary>
-      <p class="muted approx-note">This section is only a local HTML/CSS approximation for rapidly exploring values and geometry. It is not firmware evidence.</p>
-      <section class="grid">
-        <aside class="controls">
-          <label>Device<select id="device"></select></label>
-          <div class="two">
-            <label>Glucose<input id="glucose" type="number" value="112" min="1" step="1" /></label>
-            <label>Units<select id="units"><option>mg/dL</option><option>mmol/L</option></select></label>
-          </div>
-          <div class="two">
-            <label>Trend<select id="trend"><option value="↑">↑</option><option value="↗">↗</option><option value="→" selected>→</option><option value="↘">↘</option><option value="↓">↓</option></select></label>
-            <label>Delta<input id="delta" type="number" value="6" step="0.1" /></label>
-          </div>
-          <label>Reading age <span id="ageValue">3m</span><input id="age" type="range" min="0" max="90" value="3" /></label>
-          <div class="two align-end">
-            <label>IOB<input id="iob" type="number" value="0.250" min="0" step="0.001" /></label>
-            <label class="check"><input id="showIob" type="checkbox" checked /> Show IOB</label>
-          </div>
-          <p class="rule"><strong>Hard rule:</strong> 10+ minutes turns glucose red + struck through while exact age remains visible.</p>
+      <summary>Optional firmware-emulator research</summary>
+      <p class="muted approx-note">The full Xiaomi Vela/QEMU experiment is intentionally not part of normal CI because it downloads and boots a large firmware image. Physical Smart Band 10 testing remains the final authority.</p>
+      <div id="firmwareBadge" class="badge neutral">Real Vela firmware: checking previous evidence…</div>
+      <section class="real-grid">
+        <aside class="real-controls">
+          <p class="section-label">XIAOMI VELA/QEMU RESEARCH</p>
+          <h2>Previous firmware snapshots</h2>
+          <p id="realMeta" class="muted">Checking previous emulator evidence…</p>
+          <div id="realFixtures" class="fixtures real-fixtures"></div>
+          <a class="run-link" href="https://github.com/ntvibe/banddrip/actions/workflows/real-firmware-pages.yml" target="_blank" rel="noreferrer">Open manual firmware experiment ↗</a>
         </aside>
-
-        <section class="stage">
-          <div class="device-wrap"><div id="screen" class="screen">
-            <div class="glucose-row"><span id="glucoseOut">112</span><span id="trendOut">→</span></div>
-            <div class="meta-row"><span id="deltaOut">+6</span><span class="dot">·</span><span id="ageOut">3m ago</span></div>
-            <div id="iobOut" class="iob-row">IOB 0.250 U</div>
-            <div class="clock">13:44</div>
-          </div></div>
-          <div id="deviceInfo" class="device-info"></div>
+        <section class="real-stage">
+          <div class="real-frame-shell">
+            <img id="realFrame" alt="BandDrip rendered by Xiaomi Vela firmware emulator" />
+            <div id="realMissing" class="real-missing">No usable real-firmware screenshot has been published.</div>
+          </div>
+          <div id="realCaption" class="device-info"></div>
         </section>
       </section>
     </details>
 
     <section class="panel evidence">
-      <h2>Evidence levels</h2>
+      <h2>What this proves</h2>
       <div class="evidence-grid">
-        <div><strong>Real Vela emulator</strong><span>Actual Xiaomi Vela/NuttX image, QEMU, RPK install, vapp launch and emulator framebuffer capture.</span></div>
-        <div><strong>Browser approximation</strong><span>Instant layout experimentation only. Never presented as firmware output.</span></div>
-        <div><strong>Physical band</strong><span>Final authority for Global Band 10 transport, OLED clipping, battery and raise-to-wake behavior.</span></div>
+        <div><strong>Browser preview</strong><span>Fast layout and stale-state iteration at the Band 10 target dimensions.</span></div>
+        <div><strong>Vela build</strong><span>The wearable Quick App compiles successfully in CI.</span></div>
+        <div><strong>Physical band</strong><span>Final authority for stock Global Band 10 installation, transport, OLED clipping, battery and raise-to-wake behavior.</span></div>
       </div>
     </section>
   </main>
