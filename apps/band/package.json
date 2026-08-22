@@ -8,9 +8,9 @@
   },
   "scripts": {
     "start": "aiot start --watch",
-    "test": "node --experimental-default-type=module --test tests/*.test.js",
+    "test": "node tools/assert-display-spec.mjs && node --experimental-default-type=module --test tests/*.test.js",
     "build": "aiot build",
-    "release": "node tools/assert-mock-off.mjs && aiot release"
+    "release": "node tools/assert-mock-off.mjs && node tools/assert-display-spec.mjs && aiot release"
   },
   "devDependencies": {
     "@aiot-toolkit/jsc": "^1.0.3",
