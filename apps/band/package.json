@@ -9,7 +9,7 @@
   "scripts": {
     "start": "aiot start --watch",
     "build": "aiot build",
-    "release": "aiot release"
+    "release": "node tools/assert-mock-off.mjs && aiot release"
   },
   "devDependencies": {
     "@aiot-toolkit/jsc": "^1.0.3",
