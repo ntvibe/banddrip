@@ -1,12 +1,6 @@
 name: BandDrip Lab Pages
 
 on:
-  pull_request:
-    paths:
-      - 'apps/lab/**'
-      - 'packages/devices/**'
-      - 'tools/lab/**'
-      - '.github/workflows/lab-pages.yml'
   push:
     branches:
       - scaffold/public-mvp
@@ -41,25 +35,24 @@ jobs:
         run: node --check apps/lab/app.js
       - name: Assemble static Lab
         run: |
-          rm -rf .lab-dist
-          mkdir -p .lab-dist/devices .lab-dist/results
-          cp apps/lab/index.html apps/lab/styles.css apps/lab/app.js .lab-dist/
-          cp packages/devices/*.json .lab-dist/devices/
-          cp apps/lab/results/latest.json .lab-dist/results/latest.json
-          touch .lab-dist/.nojekyll
+          rm -rf lab-dist
+          mkdir -p lab-dist/devices lab-dist/results
+          cp apps/lab/index.html apps/lab/styles.css apps/lab/app.js lab-dist/
+          cp packages/devices/*.json lab-dist/devices/
+          cp apps/lab/results/latest.json lab-dist/results/latest.json
+          touch lab-dist/.nojekyll
+          find lab-dist -maxdepth 2 -type f -print
       - name: Upload Lab build artifact
         uses: actions/upload-artifact@v4
         with:
           name: banddrip-lab-static
-          path: .lab-dist
+          path: lab-dist
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .lab-dist
+          path: lab-dist
 
   deploy:
-    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
