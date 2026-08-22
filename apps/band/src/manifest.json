@@ -7,7 +7,8 @@
   "minAPILevel": 1,
   "deviceTypeList": ["watch"],
   "features": [
-    { "name": "system.interconnect" }
+    { "name": "system.interconnect" },
+    { "name": "system.file" }
   ],
   "config": {
     "logLevel": "debug",
