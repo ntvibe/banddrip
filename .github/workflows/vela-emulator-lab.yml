@@ -22,6 +22,7 @@ jobs:
       BANDDRIP_VVD_NAME: BandDrip_ProLab
       BANDDRIP_VELA_SKIN: ${{ inputs.skin || 'xiaomi_band_pro' }}
       BANDDRIP_VELA_IMAGE: vela-miwear-watch-5.0
+      EMU_SERIAL: emulator-5554
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -34,7 +35,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            xvfb adb libpulse0 libgl1 libnss3 libxkbcommon0 \
+            xvfb adb python3-pil libpulse0 libgl1 libnss3 libxkbcommon0 \
             libxcomposite1 libxcursor1 libxi6 libxtst6 libxrandr2 \
             libasound2t64 libdbus-1-3 libfontconfig1
       - name: Install Xiaomi Vela emulator tooling
@@ -57,23 +58,29 @@ jobs:
       - name: Wait for emulator ADB
         run: |
           for i in $(seq 1 150); do
-            if adb devices | grep -q 'emulator-.*device'; then adb devices; exit 0; fi
+            if adb devices | grep -q "${EMU_SERIAL}.*device"; then adb devices; exit 0; fi
             sleep 2
           done
           echo 'Vela emulator did not expose ADB in time.' >&2
           exit 1
-      - name: Attempt BandDrip deployment through aiot tooling
-        working-directory: apps/band
+      - name: Deploy and launch BandDrip directly in Vela
+        run: bash tools/vela-emulator/deploy-rpk.sh apps/band
+      - name: Capture BandDrip framebuffer
         continue-on-error: true
-        run: timeout 120s npx aiot start || true
+        run: |
+          mkdir -p emulator-evidence
+          python3 tools/vela-emulator/capture-framebuffer.py \
+            --serial "$EMU_SERIAL" --width 336 --height 480 \
+            --output-dir emulator-evidence
       - name: Capture virtual-device evidence
         if: always()
         run: |
           mkdir -p emulator-evidence
           adb devices > emulator-evidence/adb-devices.txt 2>&1 || true
-          adb shell wm size > emulator-evidence/wm-size.txt 2>&1 || true
-          adb exec-out screencap -p > emulator-evidence/screen.png 2>/dev/null || true
-          ps aux > emulator-evidence/processes.txt 2>&1 || true
+          adb -s "$EMU_SERIAL" shell "ls -la /data/quickapp/app/org.banddrip.app" > emulator-evidence/app-tree.txt 2>&1 || true
+          adb -s "$EMU_SERIAL" shell "cat /tmp/banddrip-vapp.log" > emulator-evidence/vapp.log 2>&1 || true
+          adb -s "$EMU_SERIAL" shell "ps" > emulator-evidence/guest-processes.txt 2>&1 || true
+          ps aux > emulator-evidence/host-processes.txt 2>&1 || true
           cp vela-emulator.log emulator-evidence/vela-emulator.log 2>/dev/null || true
           find apps/band/dist -type f -name '*.rpk' -exec cp {} emulator-evidence/ \; 2>/dev/null || true
       - name: Upload emulator evidence
@@ -82,4 +89,4 @@ jobs:
         with:
           name: vela-emulator-evidence-${{ env.BANDDRIP_VELA_SKIN }}
           path: emulator-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
