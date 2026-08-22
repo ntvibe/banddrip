@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -39,13 +40,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.banddrip.app.config.AppSettingsStore
-import org.banddrip.app.config.MockSettings
 import org.banddrip.app.config.RelaySettings
 import org.banddrip.app.config.SourceMode
 import org.banddrip.app.config.XDripConnectionMode
@@ -63,6 +63,7 @@ import org.banddrip.app.source.XDripHttpSource
 import org.banddrip.app.source.XDripSource
 import org.banddrip.app.transport.VirtualBandTransport
 import org.banddrip.app.ui.BandPreview
+import org.banddrip.app.ui.BandSetupPanel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +89,7 @@ private fun BandDripHome(activity: ComponentActivity) {
     var sourceTestStatus by remember { mutableStateOf("Not tested yet") }
     var lastPacket by remember { mutableStateOf(stateStore.lastPacket()) }
     var reliabilityTick by remember { mutableStateOf(0) }
+    var sourceBusy by remember { mutableStateOf(false) }
 
     val engine = remember { BandDripEngine() }
     val scope = rememberCoroutineScope()
@@ -114,12 +116,26 @@ private fun BandDripHome(activity: ComponentActivity) {
         }
     }
 
-    fun persist(next: RelaySettings = settings, restartRelay: Boolean = false) {
-        settings = next
-        settingsStore.save(next)
-        settings = settingsStore.load() // reload normalized URLs / encrypted-secret state
-        if (restartRelay && settings.backgroundEnabled) {
-            runCatching { BandDripRelayService.start(context, BandDripRelayService.ACTION_SETTINGS_CHANGED) }
+    fun persist(next: RelaySettings = settings, restartRelay: Boolean = false): Boolean {
+        return try {
+            settings = next
+            settingsStore.save(next)
+            settings = settingsStore.load()
+            if (restartRelay && settings.backgroundEnabled) {
+                runCatching {
+                    BandDripRelayService.start(
+                        context,
+                        BandDripRelayService.ACTION_SETTINGS_CHANGED,
+                    )
+                }.onFailure {
+                    relayStatus = "Could not restart relay: ${safeUiError(it)}"
+                }
+            }
+            true
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            sourceTestStatus = "Failed ✕ · settings: ${safeUiError(error)}"
+            false
         }
     }
 
@@ -138,30 +154,54 @@ private fun BandDripHome(activity: ComponentActivity) {
     }
 
     fun refreshSelectedSource() {
-        persist()
-        val source = currentSource()
-        if (source == null) {
-            sourceTestStatus = "Not configured"
-            return
-        }
+        if (sourceBusy) return
+        sourceBusy = true
+        sourceTestStatus = "Testing…"
+
         scope.launch {
-            sourceTestStatus = "Testing…"
-            val snapshot = engine.refresh(source, transport, settings.showIob)
-            if (snapshot.errorMessage != null) {
-                sourceTestStatus = "Failed ✕ · ${snapshot.errorMessage}"
-            } else if (snapshot.reading == null) {
-                sourceTestStatus = "Connected ✓ · no glucose reading received"
-            } else {
-                reading = snapshot.reading
-                stateStore.saveReading(snapshot.reading, "${snapshot.sourceId} connected · manual test")
-                sourceTestStatus = "Connected ✓ · ${formatReadingSummary(snapshot.reading)}"
+            try {
+                if (!persist()) return@launch
+                val source = try {
+                    currentSource()
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    sourceTestStatus = "Failed ✕ · configuration: ${safeUiError(error)}"
+                    return@launch
+                }
+
+                if (source == null) {
+                    sourceTestStatus = "Failed ✕ · source is not configured"
+                    return@launch
+                }
+
+                val snapshot = engine.refresh(source, transport, settings.showIob)
+                if (snapshot.errorMessage != null) {
+                    sourceTestStatus = "Failed ✕ · ${snapshot.errorMessage}"
+                } else if (snapshot.reading == null) {
+                    sourceTestStatus = "Connected ✓ · no glucose reading received"
+                } else {
+                    reading = snapshot.reading
+                    stateStore.saveReading(
+                        snapshot.reading,
+                        "${snapshot.sourceId} connected · manual test",
+                    )
+                    sourceTestStatus = "Connected ✓ · ${formatReadingSummary(snapshot.reading)}"
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                sourceTestStatus = "Failed ✕ · ${safeUiError(error)}"
+            } finally {
+                sourceBusy = false
             }
         }
     }
 
     val notificationAllowed = ReliabilityController.hasNotificationPermission(context)
     val batteryUnrestricted = ReliabilityController.isIgnoringBatteryOptimizations(context)
-    val xdripInstalled = remember(reliabilityTick) { isPackageInstalled(context.packageManager, "com.eveningoutpost.dexdrip") }
+    val xdripInstalled = remember(reliabilityTick) {
+        isPackageInstalled(context.packageManager, "com.eveningoutpost.dexdrip")
+    }
 
     Column(
         modifier = Modifier
@@ -173,15 +213,15 @@ private fun BandDripHome(activity: ComponentActivity) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("BandDrip", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                "Glucose source + exact Smart Band 10 preview",
+                "Glucose relay + Smart Band 10 control console",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
         HorizontalDivider()
-
         SectionTitle("Glucose source")
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -216,15 +256,23 @@ private fun BandDripHome(activity: ComponentActivity) {
             )
         }
 
-        Button(onClick = ::refreshSelectedSource, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = ::refreshSelectedSource,
+            enabled = !sourceBusy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text(
-                when (settings.sourceMode) {
-                    SourceMode.Mock -> "Generate / test mock reading"
-                    SourceMode.Nightscout -> "Test Nightscout connection"
-                    SourceMode.XDrip -> if (settings.xdripConnectionMode == XDripConnectionMode.LocalServer) {
-                        "Test xDrip local server"
-                    } else {
-                        "Check xDrip broadcast data"
+                if (sourceBusy) {
+                    "Testing…"
+                } else {
+                    when (settings.sourceMode) {
+                        SourceMode.Mock -> "Generate / test mock reading"
+                        SourceMode.Nightscout -> "Test Nightscout connection"
+                        SourceMode.XDrip -> if (settings.xdripConnectionMode == XDripConnectionMode.LocalServer) {
+                            "Test xDrip local server"
+                        } else {
+                            "Check xDrip broadcast data"
+                        }
                     }
                 },
             )
@@ -235,7 +283,7 @@ private fun BandDripHome(activity: ComponentActivity) {
         HorizontalDivider()
         SectionTitle("Smart Band 10 preview")
         Text(
-            "This preview uses the same 212×520 geometry, font sizes, spacing and colors as the Vela RPK display specification.",
+            "The preview is driven by the same 212×520 display specification that Vela CI validates against the RPK.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -258,6 +306,9 @@ private fun BandDripHome(activity: ComponentActivity) {
         }
 
         HorizontalDivider()
+        BandSetupPanel()
+
+        HorizontalDivider()
         SectionTitle("Always-on relay")
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -275,10 +326,10 @@ private fun BandDripHome(activity: ComponentActivity) {
                 checked = settings.backgroundEnabled,
                 onCheckedChange = { enabled ->
                     val next = settings.copy(backgroundEnabled = enabled)
-                    persist(next)
+                    if (!persist(next)) return@Switch
                     if (enabled) {
                         runCatching { BandDripRelayService.start(context) }
-                            .onFailure { relayStatus = "Could not start relay: ${it.message}" }
+                            .onFailure { relayStatus = "Could not start relay: ${safeUiError(it)}" }
                     } else {
                         runCatching { BandDripRelayService.stop(context) }
                     }
@@ -301,6 +352,7 @@ private fun BandDripHome(activity: ComponentActivity) {
         ReliabilityRow("Foreground relay", settings.backgroundEnabled && stateStore.isServiceRunning())
         ReliabilityRow("Notifications allowed", notificationAllowed)
         ReliabilityRow("Battery optimization disabled", batteryUnrestricted)
+
         if (ReliabilityController.isXiaomiDevice()) {
             Text(
                 "Xiaomi/HyperOS may kill background apps independently. Enable Autostart and set Battery saver to No restrictions for BandDrip.",
@@ -337,7 +389,7 @@ private fun BandDripHome(activity: ComponentActivity) {
         ) { Text("Open Android app battery settings") }
 
         Text(
-            "Accessibility permission is intentionally not requested. It would allow BandDrip to inspect/control other apps but does not make a glucose relay more reliable. Foreground service + boot restart + unrestricted battery/autostart are the relevant mechanisms.",
+            "Accessibility permission is intentionally not requested. It would allow BandDrip to inspect/control other apps but does not make the glucose relay more reliable. Foreground service + boot restart + unrestricted battery/autostart are the relevant mechanisms.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -439,11 +491,13 @@ private fun NightscoutSettingsPanel(
             onChange(settings.copy(nightscoutPollMinutes = it.coerceIn(1, 30)))
         }
         Text(
-            "You can paste the browser tracking link exactly as-is. On save, BandDrip strips ?token= from the URL and stores the token encrypted.",
+            "Paste a full tracking link or a clean base URL. Embedded tokens are stripped from the stored URL and encrypted locally. Connection-test failures remain on this screen as diagnostics.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        OutlinedButton(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Save Nightscout settings") }
+        OutlinedButton(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+            Text("Save Nightscout settings")
+        }
     }
 }
 
@@ -483,7 +537,7 @@ private fun XDripSettingsPanel(
                 singleLine = true,
             )
             Text(
-                "For xDrip running on this phone, enable Local Web Service in xDrip Inter-App settings and use http://127.0.0.1:17580. No Nightscout connection is required.",
+                "For xDrip on this phone, enable Local Web Service in xDrip Inter-App settings and use http://127.0.0.1:17580. Nightscout is not required.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -493,12 +547,14 @@ private fun XDripSettingsPanel(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Enable xDrip's broadcast-data option. BandDrip listens for protected BgEstimate broadcasts and computes delta from consecutive readings.",
+                "Enable xDrip's broadcast-data option. BandDrip listens for BgEstimate broadcasts and computes delta from consecutive readings.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        OutlinedButton(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Save xDrip settings") }
+        OutlinedButton(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+            Text("Save xDrip settings")
+        }
     }
 }
 
@@ -573,10 +629,17 @@ private fun Trend.shortLabel(): String = when (this) {
 }
 
 private fun formatReadingSummary(reading: BandDripReading): String {
-    val glucose = if (reading.units == GlucoseUnits.MgDl) reading.glucose.toInt().toString() else "%.1f".format(reading.glucose)
+    val glucose = if (reading.units == GlucoseUnits.MgDl) {
+        reading.glucose.toInt().toString()
+    } else {
+        "%.1f".format(reading.glucose)
+    }
     val age = ((System.currentTimeMillis() - reading.glucoseTimestampMs).coerceAtLeast(0L) / 60_000L)
     return "$glucose ${reading.units.wireValue} · ${age}m ago"
 }
+
+private fun safeUiError(error: Throwable): String =
+    error.message?.trim()?.takeIf { it.isNotBlank() }?.take(280) ?: error::class.java.simpleName
 
 private fun isPackageInstalled(packageManager: PackageManager, packageName: String): Boolean = runCatching {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
