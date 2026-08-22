@@ -1,4 +1,5 @@
 <script>
+/**manifest**/
 export default {
   onCreate() {
     console.info('BandDrip created')
