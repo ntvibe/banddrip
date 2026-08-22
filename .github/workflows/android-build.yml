@@ -4,12 +4,18 @@ on:
   pull_request:
     paths:
       - 'apps/android/**'
+      - 'apps/band/**'
+      - 'packages/display-spec/**'
+      - 'tools/installer/**'
       - '.github/workflows/android-build.yml'
   push:
     branches:
       - main
     paths:
       - 'apps/android/**'
+      - 'apps/band/**'
+      - 'packages/display-spec/**'
+      - 'tools/installer/**'
       - '.github/workflows/android-build.yml'
 
 jobs:
@@ -29,11 +35,48 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Install Android 37 SDK packages
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+
+      - name: Build matching Vela RPK
+        run: |
+          cd ../band
+          npm install
+          node tools/assert-mock-off.mjs
+          npm test
+          npm run build
+
+      - name: Bundle wearable RPK and Mi Fitness launcher
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/bundled
+
+          RPK_FILE=$(find ../band/dist -name '*.rpk' -type f | sort | head -n 1)
+          test -n "$RPK_FILE"
+          cp "$RPK_FILE" app/src/main/assets/bundled/banddrip.rpk
+
+          PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -n 1)/android.jar
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          rm -rf /tmp/banddrip-launch-classes /tmp/banddrip-launch-dex
+          mkdir -p /tmp/banddrip-launch-classes /tmp/banddrip-launch-dex
+          javac -source 8 -target 8 -bootclasspath "$PLATFORM" \
+            ../../tools/installer/LaunchFragment.java \
+            -d /tmp/banddrip-launch-classes
+          "$BUILD_TOOLS/d8" \
+            /tmp/banddrip-launch-classes/LaunchFragment.class \
+            --output /tmp/banddrip-launch-dex
+          cp /tmp/banddrip-launch-dex/classes.dex app/src/main/assets/bundled/launch.dex
+
+          sha256sum app/src/main/assets/bundled/banddrip.rpk
+          sha256sum app/src/main/assets/bundled/launch.dex
 
       - name: Set up Gradle 9.5
         uses: gradle/actions/setup-gradle@v4
@@ -46,9 +89,14 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
 
+      - name: Verify all-in-one APK payload
+        run: |
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep 'assets/bundled/banddrip.rpk'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep 'assets/bundled/launch.dex'
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: banddrip-android-debug-apk
+          name: banddrip-all-in-one-debug-apk
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
