@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "devices": [
+    "band10.json",
+    "band10-pro.json",
+    "band9-pro.json",
+    "band8-pro.json"
+  ]
+}

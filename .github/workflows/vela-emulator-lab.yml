@@ -1,0 +1,78 @@
+name: Experimental Vela emulator lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      skin:
+        description: 'Known Xiaomi Vela full-emulator skin'
+        required: true
+        default: 'xiaomi_band_pro'
+        type: choice
+        options:
+          - xiaomi_band_pro
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BANDDRIP_VVD_NAME: BandDrip_ProLab
+      BANDDRIP_VELA_SKIN: ${{ inputs.skin }}
+      BANDDRIP_VELA_IMAGE: vela-miwear-watch-5.0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Enable KVM when exposed by runner
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Install emulator host dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb adb
+      - name: Install Xiaomi Vela emulator tooling
+        run: npm install --no-save aiot-toolkit@2.0.5 @aiot-toolkit/emulator
+      - name: Download Vela emulator environment
+        run: npx aiot initEmulatorEnv
+      - name: Create virtual Xiaomi band
+        run: node tools/vela-emulator/create-vvd.cjs
+      - name: Start virtual band under Xvfb
+        run: |
+          nohup xvfb-run -a node tools/vela-emulator/start-vvd.cjs > vela-emulator.log 2>&1 &
+          echo $! > vela-emulator.pid
+      - name: Wait for emulator ADB
+        run: |
+          for i in $(seq 1 90); do
+            if adb devices | grep -q 'emulator-.*device'; then adb devices; exit 0; fi
+            sleep 2
+          done
+          echo 'Vela emulator did not expose ADB in time.' >&2
+          cat vela-emulator.log || true
+          exit 1
+      - name: Build BandDrip RPK
+        working-directory: apps/band
+        run: |
+          npm install
+          npm test
+          npm run build
+      - name: Attempt BandDrip deployment through aiot tooling
+        working-directory: apps/band
+        continue-on-error: true
+        run: timeout 120s npx aiot start || true
+      - name: Capture virtual-device evidence
+        run: |
+          mkdir -p emulator-evidence
+          adb devices > emulator-evidence/adb-devices.txt
+          adb shell wm size > emulator-evidence/wm-size.txt 2>&1 || true
+          adb exec-out screencap -p > emulator-evidence/screen.png 2>/dev/null || true
+          cp vela-emulator.log emulator-evidence/vela-emulator.log || true
+          find apps/band/dist -type f -name '*.rpk' -exec cp {} emulator-evidence/ \; || true
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-emulator-evidence-${{ inputs.skin }}
+          path: emulator-evidence
+          if-no-files-found: warn

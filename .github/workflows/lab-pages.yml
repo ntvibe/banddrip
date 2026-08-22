@@ -1,0 +1,67 @@
+name: BandDrip Lab Pages
+
+on:
+  pull_request:
+    paths:
+      - 'apps/lab/**'
+      - 'packages/devices/**'
+      - 'tools/lab/**'
+      - '.github/workflows/lab-pages.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/lab/**'
+      - 'packages/devices/**'
+      - 'tools/lab/**'
+      - '.github/workflows/lab-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: banddrip-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Validate device profiles
+        run: node tools/lab/validate-devices.mjs
+      - name: Assemble static Lab
+        run: |
+          rm -rf .lab-dist
+          mkdir -p .lab-dist/devices .lab-dist/results
+          cp apps/lab/index.html apps/lab/styles.css apps/lab/app.js .lab-dist/
+          cp packages/devices/*.json .lab-dist/devices/
+          cp apps/lab/results/latest.json .lab-dist/results/latest.json
+          touch .lab-dist/.nojekyll
+      - name: Upload Lab build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: banddrip-lab-static
+          path: .lab-dist
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .lab-dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
