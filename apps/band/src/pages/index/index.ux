@@ -120,6 +120,7 @@
     DEV_MOCK_SEQUENCE,
     createMockReading
   } from '../../common/dev-mock.js'
+  import { persistGlanceSettings, persistGlanceState } from '../../common/glance-store.js'
   import { isSupportedPacket } from '../../common/protocol.js'
   import { validateReading } from '../../common/validation.js'
 
@@ -184,6 +185,7 @@
       const step = DEV_MOCK_SEQUENCE[this.mockIndex]
       this.reading = createMockReading(step)
       this.hasReading = true
+      persistGlanceState(this.reading, this.showIob)
       this.refreshDisplay()
       console.info(`BandDrip DEMO state: ${step.label}`)
     },
@@ -201,6 +203,7 @@
 
         if (payload.type === 'settings') {
           if (typeof payload.showIob === 'boolean') this.showIob = payload.showIob
+          persistGlanceSettings(this.reading, this.showIob)
           return
         }
 
@@ -213,6 +216,7 @@
 
         this.reading = payload
         this.hasReading = true
+        persistGlanceState(this.reading, this.showIob)
         this.refreshDisplay()
       } catch (error) {
         console.error('BandDrip invalid message', error)
