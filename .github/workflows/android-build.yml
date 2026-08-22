@@ -21,6 +21,8 @@ on:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    env:
+      BANDDRIP_USE_SHARED_DEBUG_SIGNING: 'true'
     defaults:
       run:
         working-directory: apps/android
@@ -46,7 +48,7 @@ jobs:
       - name: Install Android 37 SDK packages
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
 
-      - name: Restore stable BandDrip debug signing identity
+      - name: Restore BandDrip debug signing identity when available
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
@@ -149,13 +151,14 @@ jobs:
 
           EXPECTED=$(openssl x509 -in ../band/sign/certificate.pem -outform DER | sha256sum | awk '{print $1}')
           ACTUAL=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | sed -n 's/^.*certificate SHA-256 digest: //p' \
             | tr -d ':' \
             | tr 'A-F' 'a-f' \
             | head -n 1)
 
           echo "Expected shared cert SHA-256: $EXPECTED"
           echo "Android APK cert SHA-256:    $ACTUAL"
+          test -n "$ACTUAL"
           test "$EXPECTED" = "$ACTUAL"
 
       - name: Verify all-in-one APK payload
