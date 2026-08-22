@@ -1,16 +1,17 @@
 package org.banddrip.app.ui
 
+import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,23 +23,41 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.banddrip.app.model.BandDripReading
 import org.banddrip.app.model.GlucoseUnits
 import org.banddrip.app.model.Trend
 import org.banddrip.app.safety.FreshnessPolicy
 
+/**
+ * Phone-side preview of the Vela page.
+ *
+ * Geometry, typography sizes and colors are loaded from packages/display-spec/band10-v1.json.
+ * Vela CI asserts that apps/band/src/pages/index/index.ux still matches that same spec.
+ */
 @Composable
 fun BandPreview(
     reading: BandDripReading?,
     showIob: Boolean,
     modifier: Modifier = Modifier,
+    previewWidth: Dp = 180.dp,
 ) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val spec = remember { BandDisplaySpec.load(context) }
+    val scale = previewWidth.value / spec.designWidth
+    fun d(value: Float): Dp = (value * scale).dp
+    fun textSize(value: Float) = with(density) { d(value).toSp() }
+    fun color(hex: String) = Color(AndroidColor.parseColor(hex))
+
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -48,67 +67,105 @@ fun BandPreview(
     }
 
     val stale = reading == null || FreshnessPolicy.isStale(reading.glucoseTimestampMs, nowMs)
-    val mainColor = if (stale && reading != null) MaterialTheme.colorScheme.error else Color.White
+    val mainColor = if (stale && reading != null) color(spec.colors.stale) else color(spec.colors.primary)
 
     Box(
         modifier = modifier
-            .width(132.dp)
-            .height(324.dp)
-            .clip(RoundedCornerShape(66.dp))
-            .background(Color.Black),
+            .width(previewWidth)
+            .height(d(spec.designHeight))
+            .clip(RoundedCornerShape(d(spec.capsuleRadius)))
+            .background(color(spec.colors.background)),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 58.dp, start = 8.dp, end = 8.dp),
+                .padding(
+                    top = d(spec.contentTop),
+                    start = d(spec.contentHorizontalPadding),
+                    end = d(spec.contentHorizontalPadding),
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .width(d(spec.glucoseRowWidth))
+                    .height(d(spec.glucoseRowHeight)),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
                     text = reading?.let(::glucoseText) ?: "—",
                     style = TextStyle(
                         color = mainColor,
-                        fontSize = 45.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = textSize(spec.glucoseFontSize),
+                        fontWeight = FontWeight(spec.glucoseFontWeight),
                         textDecoration = if (stale && reading != null) TextDecoration.LineThrough else null,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
                     ),
                 )
                 if (reading != null) {
                     Text(
                         text = trendArrow(reading.trend),
-                        color = mainColor,
-                        fontSize = 25.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(start = d(spec.trendMarginLeft)),
+                        style = TextStyle(
+                            color = mainColor,
+                            fontSize = textSize(spec.trendFontSize),
+                            fontWeight = FontWeight(spec.trendFontWeight),
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        ),
                     )
                 }
             }
 
+            Spacer(modifier = Modifier.height(d(spec.metaMarginTop)))
+
             Row(
+                modifier = Modifier
+                    .width(d(spec.metaRowWidth))
+                    .height(d(spec.metaRowHeight)),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     text = reading?.let(::deltaText) ?: "Δ —",
-                    color = Color(0xFF64D2FF),
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium,
+                    style = TextStyle(
+                        color = color(spec.colors.delta),
+                        fontSize = textSize(spec.metaFontSize),
+                        fontWeight = FontWeight(spec.metaFontWeight),
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
                 )
-                Text("·", color = Color(0xFF6E6E73), fontSize = 16.sp)
+                Text(
+                    text = "·",
+                    modifier = Modifier.padding(horizontal = d(spec.separatorMargin)),
+                    style = TextStyle(
+                        color = color(spec.colors.separator),
+                        fontSize = textSize(spec.separatorFontSize),
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
+                )
                 Text(
                     text = reading?.let { ageText(it.glucoseTimestampMs, nowMs) } ?: "age —",
-                    color = Color(0xFFB0B0B5),
-                    fontSize = 16.sp,
+                    style = TextStyle(
+                        color = color(spec.colors.age),
+                        fontSize = textSize(spec.metaFontSize),
+                        fontWeight = FontWeight(spec.metaFontWeight),
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
                 )
             }
 
             if (showIob) {
+                Spacer(modifier = Modifier.height(d(spec.iobMarginTop)))
                 Text(
                     text = reading?.let { iobText(it, nowMs) } ?: "IOB —",
-                    color = Color(0xFFD1D1D6),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
+                    style = TextStyle(
+                        color = color(spec.colors.iob),
+                        fontSize = textSize(spec.iobFontSize),
+                        fontWeight = FontWeight(spec.iobFontWeight),
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
                 )
             }
         }
