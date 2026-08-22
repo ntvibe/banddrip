@@ -1,6 +1,9 @@
 name: Experimental Vela emulator lab
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/vela-emulator-lab.yml'
   workflow_dispatch:
     inputs:
       skin:
