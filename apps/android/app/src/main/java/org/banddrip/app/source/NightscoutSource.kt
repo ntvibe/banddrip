@@ -9,10 +9,11 @@ import kotlinx.coroutines.withContext
 import org.banddrip.app.model.BandDripReading
 
 class NightscoutSource(
-    private val baseUrl: String,
-    private val accessToken: String? = null,
+    baseUrl: String,
+    accessToken: String? = null,
 ) : GlucoseSource {
     override val id: String = "nightscout"
+    private val endpoint = NightscoutEndpoint.parse(baseUrl, accessToken)
 
     override suspend fun latestReading(): BandDripReading? = withContext(Dispatchers.IO) {
         val entries = get("/api/v1/entries/sgv.json?count=2")
@@ -22,23 +23,25 @@ class NightscoutSource(
         NightscoutParser.parseReading(entries, deviceStatus)
     }
 
-    suspend fun checkConnection(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun checkConnection(): Result<BandDripReading?> = withContext(Dispatchers.IO) {
         runCatching {
-            get("/api/v1/status.json")
-            Unit
+            // Some Nightscout installs expose /status without auth differences.
+            // The SGV endpoint is the real source of truth for BandDrip connectivity.
+            val entries = get("/api/v1/entries/sgv.json?count=2")
+            val deviceStatus = runCatching {
+                get("/api/v1/devicestatus.json?count=1")
+            }.getOrNull()
+            NightscoutParser.parseReading(entries, deviceStatus)
         }
     }
 
-    private fun get(pathAndQuery: String): String {
-        val normalizedBase = baseUrl.trim().trimEnd('/')
-        require(normalizedBase.startsWith("https://")) {
-            "Nightscout URL must use HTTPS"
-        }
+    fun sanitizedDescription(): String = endpoint.baseUrl
 
+    private fun get(pathAndQuery: String): String {
         val separator = if ('?' in pathAndQuery) '&' else '?'
-        val token = accessToken?.trim()?.takeIf { it.isNotEmpty() }
+        val token = endpoint.token
         val url = buildString {
-            append(normalizedBase)
+            append(endpoint.baseUrl)
             append(pathAndQuery)
             if (token != null) {
                 append(separator)
