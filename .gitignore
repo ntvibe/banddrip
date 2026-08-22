@@ -1,0 +1,29 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+
+# Signing material — never commit
+*.jks
+*.keystore
+*.p12
+*.pem
+**/sign/debug/
+**/sign/release/
+
+# Xiaomi Vela build output
+**/dist/
+**/.aiot/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local secrets / environment
+.env
+.env.*
+!.env.example
