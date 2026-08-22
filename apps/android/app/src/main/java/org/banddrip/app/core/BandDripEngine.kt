@@ -1,6 +1,7 @@
 package org.banddrip.app.core
 
 import org.banddrip.app.model.BandDripReading
+import org.banddrip.app.safety.ReadingValidator
 import org.banddrip.app.source.GlucoseSource
 import org.banddrip.app.transport.BandTransport
 
@@ -20,7 +21,10 @@ class BandDripEngine {
         return try {
             val reading = source.latestReading()
             transport.sendSettings(showIob)
-            if (reading != null) transport.sendReading(reading)
+            if (reading != null) {
+                ReadingValidator.requireValid(reading)
+                transport.sendReading(reading)
+            }
             EngineSnapshot(
                 reading = reading,
                 sourceId = source.id,
