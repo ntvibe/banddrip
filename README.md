@@ -1,12 +1,16 @@
 # 🩸 BandDrip
 
-Open-source glucose display for Xiaomi Smart Band, built with Xiaomi Vela.
+Open-source glucose display for Xiaomi Smart Band.
 
-> **Status:** virtual MVP in active development. Android and Vela builds run in CI, Nightscout is implemented as the first real glucose source, and the Band 10 UI/safety logic can be exercised without hardware. Installation and phone↔band transport on a physical global Xiaomi Smart Band 10 still require validation.
+> **Status:** virtual MVP in active development. Android, Vela and the browser Lab build in CI. xDrip and Nightscout source paths are implemented. Physical Xiaomi Smart Band 10 installation, live `system.interconnect` transport and the zero-tap watch-face bridge still require real-device validation.
 
-BandDrip aims to provide a clean, glanceable secondary glucose display while preserving stock Xiaomi firmware and the normal Mi Fitness experience.
+BandDrip is designed around one interaction goal:
 
-## Default band screen
+> **raise wrist → see current glucose immediately**
+
+The project aims to preserve stock Xiaomi firmware and the normal Mi Fitness experience wherever possible.
+
+## Default glance screen
 
 ```text
        112 ↘
@@ -16,97 +20,152 @@ BandDrip aims to provide a clean, glanceable secondary glucose display while pre
      IOB 0.250 U
 ```
 
-The wearable UI intentionally stays minimal:
+Core display contract:
 
-- **Glucose + trend arrow** are the dominant top row.
-- **Delta** versus the immediately previous valid glucose reading is always visible when available.
-- **Exact freshness** (`Xm ago`) is always visible.
-- **IOB** is shown by default and can be disabled from the Android companion.
-- At **10+ minutes**, glucose becomes **red with a native strike-through** while its exact age remains visible.
-- IOB has independent freshness; stale IOB renders as `IOB —` even when glucose is fresh.
-- Missing or invalid data is never invented or silently presented as current.
+- glucose + trend are visually dominant
+- delta versus the immediately previous valid reading is non-negotiable
+- exact freshness (`Xm ago`) is always visible
+- IOB is shown by default and can be disabled in Android
+- at **10+ minutes**, glucose turns **red + struck through** while exact age remains visible
+- IOB has independent freshness and must not silently remain current
+- missing/invalid data fails closed instead of inventing a reading
 
-## What works today
+## Android companion
 
-### Android companion
+BandDrip Android acts as the source, settings, reliability and installation console.
 
-- deterministic mock glucose source
-- Nightscout source (`latest 2 SGV entries` + optional recent device-status IOB)
-- delta computed locally as `current - previous valid glucose`
-- Nightscout trend normalization
-- HTTPS-only Nightscout transport with optional access token
-- normalized protocol-v1 packets
-- source-independent `GlucoseSource` interface
-- source→validation→transport engine
-- virtual Band transport
-- interactive Band-style preview
-- IOB toggle, enabled by default
-- one-tap 12-minute stale-state injection for testing
-- reading validation before transport
-- unit tests for freshness, Nightscout normalization, protocol and fail-closed behavior
+### Sources
 
-### Xiaomi Vela app
+- **Mock** — editable test values + deterministic edge-case cycle
+- **Nightscout** — accepts base URL + token or a full tracking URL containing `?token=...`
+- **xDrip local server** — Nightscout-compatible local `/sgv.json` source
+- **xDrip broadcast** — receives xDrip glucose broadcasts directly
 
-- 212×520 Band 10-oriented layout
-- glucose + trend / delta + freshness / IOB hierarchy
-- 30-second age recalculation even without a new glucose packet
+Delta is computed from consecutive valid glucose readings rather than fabricated when unavailable.
+
+### Reliability
+
+- persistent foreground relay service
+- `START_STICKY`
+- boot/app-update restart when enabled
+- battery-optimization exemption flow
+- Xiaomi/HyperOS autostart and battery-management shortcuts
+- notification permission handling
+
+BandDrip does **not** request Accessibility Service merely to stay alive; screen-control privilege is unrelated to the relay job.
+
+### All-in-one package direction
+
+The Android CI pipeline builds a single APK containing:
+
+```text
+BandDrip APK
+├── Android companion
+├── matching BandDrip RPK
+└── Mi Fitness installer helper
+```
+
+The APK/RPK signing identities are checked in CI. Installation automation remains experimental until verified with stock Global Mi Fitness + a physical band.
+
+## Xiaomi Vela wearable
+
+The Smart Band 10 RPK implements:
+
+- 212×520 Band 10 layout
+- glucose + trend / delta + exact age / IOB hierarchy
+- independent band-side age recalculation
 - exact 10-minute stale boundary
-- red + native text strike-through for stale glucose
+- red + native line-through stale state
 - independent IOB freshness
 - protocol-version guard
-- second independent reading-validation gate before rendering
-- unavailable state (`—`) instead of fake fallback data
-- opt-in emulator DEMO mode with a visible marker
-- emulator fixtures for fresh, stale, 350 mg/dL, mmol/L, stale IOB and missing-delta states
-- release guard that refuses to package while DEMO mode is enabled
+- defensive packet validation
+- unavailable state (`—`) instead of fake fallback glucose
+- deterministic emulator fixtures
+- wearable regression tests
 
-### CI
+## BandDrip Lab
 
-GitHub Actions builds both halves independently:
+`apps/lab/` is a dependency-free multi-device browser simulator prepared for GitHub Pages.
 
-- Android unit tests + debug APK
-- Vela build + debug RPK
+Initial profiles:
 
-Successful runs upload installable build artifacts for further testing.
+- **Smart Band 10** — primary BandDrip target, 212×520
+- **Smart Band 10 Pro** — experimental watch-face target, 336×480
+- **Smart Band 9 Pro** — Vela-emulator research, 336×480
+- **Smart Band 8 Pro** — Vela-emulator research, 336×480
+
+The Lab lets contributors change glucose, units, trend, delta, exact age and IOB, and instantly exercise fresh/stale/high/mmol/missing-delta cases.
+
+Device capability metadata lives in `packages/devices/` so adding another Xiaomi band does not require hard-coding another UI.
+
+See [`docs/LAB.md`](docs/LAB.md).
+
+## Three evidence levels
+
+BandDrip deliberately does not call every preview an emulator.
+
+### 1. Browser simulator
+
+Fast layout and safety-state iteration. Useful, but not firmware evidence.
+
+### 2. Xiaomi Vela emulator
+
+A separate heavy GitHub Action downloads Xiaomi's Vela emulator environment, creates a virtual band using the known `xiaomi_band_pro` skin, boots it under Xvfb/KVM, attempts ADB control and captures evidence artifacts.
+
+This workflow is manual-only because the emulator environment is large and should not run on every commit.
+
+### 3. Physical hardware
+
+The final authority for:
+
+- stock Mi Fitness installation
+- Android↔band transport
+- reconnect/background behavior
+- zero-tap watch-face shared-state experiment
+- OLED readability and raise-to-wake UX
+- battery consumption
+- NFC/payment coexistence
 
 ## Architecture
 
 ```text
-Nightscout / future xDrip+ / Juggluco adapters
-                         |
-                         v
-                 Android companion
-             normalize + validate data
-                         |
-                         v
-                 BandDrip protocol v1
-                         |
-                         v
-            BandTransport abstraction
-               |                  |
-               v                  v
-       Virtual transport     Xiaomi transport
-          (working)          (hardware TBD)
-                                  |
-                                  v
-                        system.interconnect
-                                  |
-                                  v
-                         BandDrip Vela app
-                         validate + render
+Mock / Nightscout / xDrip
+            ↓
+     Android companion
+   normalize + validate
+            ↓
+   BandDrip protocol v1
+            ↓
+     BandTransport
+      ↙          ↘
+ virtual       Xiaomi
+ transport   interconnect
+                  ↓
+            BandDrip RPK
+                  ↓
+       experimental glance state
+                  ↓
+        BandDrip watch face
 ```
 
-Source-specific logic stays on Android. The band receives a small normalized message and does not need CGM credentials or direct internet access.
+Source-specific credentials stay on Android. The wearable receives normalized data and must never need CGM credentials or direct internet access.
 
 Repository layout:
 
 ```text
 apps/
-  android/        Android companion + virtual test bench
-  band/           Xiaomi Vela wearable app
+  android/          Android companion + virtual test bench
+  band/             Xiaomi Vela wearable app
+  lab/              multi-device browser simulator
 packages/
-  protocol/       Source-independent JSON contracts
+  protocol/         source-independent JSON contract
+  display-spec/     Band 10 rendering contract
+  devices/          Xiaomi device geometry/capability profiles
+tools/
+  lab/              device validation
+  vela-emulator/    CI virtual-device helpers
 docs/
+  LAB.md
   ARCHITECTURE.md
   EMULATOR.md
   NIGHTSCOUT.md
@@ -118,56 +177,20 @@ docs/
 
 1. **Freshness is as important as the glucose value.**
 2. Never silently present stale data as current.
-3. Delta means current glucose minus the immediately previous valid glucose reading.
-4. IOB has its own freshness and must never inherit glucose freshness.
-5. Keep the normal band display uncluttered.
-6. Keep secrets, CGM URLs, tokens and credentials off the wearable and out of the repository.
-7. Treat Nightscout, xDrip+, Juggluco and future inputs as interchangeable source adapters.
-8. Prefer official Xiaomi Vela APIs and stock firmware where possible.
-9. Build public-first: documented interfaces, small components and contributor-friendly boundaries.
-10. Fail closed when data or protocol validation fails.
-
-## Development without a Band 10
-
-A physical band is **not** required for most development.
-
-The Android app can already exercise:
-
-```text
-Mock / Nightscout
-       ↓
- normalization
-       ↓
- safety validation
-       ↓
- protocol v1
-       ↓
- virtual transport
-       ↓
- Band-style preview
-```
-
-The Vela app can independently build and run against deterministic emulator fixtures. See [`docs/EMULATOR.md`](docs/EMULATOR.md) and [`docs/TEST_MATRIX.md`](docs/TEST_MATRIX.md).
-
-## Still hardware-dependent
-
-These claims remain intentionally unverified until a physical **global Xiaomi Smart Band 10** is available:
-
-- installing BandDrip on stock global Band 10 firmware
-- final Vela/native package and signing identity requirements
-- coexistence with normal Mi Fitness pairing and features
-- Android→Mi Fitness/Band `system.interconnect` delivery
-- reconnect/background reliability
-- real OLED readability and wrist ergonomics
-- battery impact
-
-The Xiaomi-specific Android transport stays isolated behind `BandTransport` so these unknowns do not contaminate source parsing or UI logic.
+3. Delta means current minus the immediately previous valid glucose reading.
+4. IOB has its own freshness.
+5. Keep the wrist display glanceable and uncluttered.
+6. Keep secrets, private CGM URLs, tokens and credentials off the wearable and out of the repository.
+7. Treat Nightscout, xDrip and future sources as interchangeable adapters.
+8. Prefer official Xiaomi APIs and stock firmware where practical.
+9. Separate browser simulation, firmware emulation and hardware evidence.
+10. Fail closed when source data or protocol validation fails.
 
 ## Safety notice
 
-BandDrip is an unofficial secondary glucose display and is not a medical device. Do not use it as the sole basis for treatment decisions. Data may be delayed, unavailable, or incorrect. Use at your own risk and verify important readings in your approved CGM/pump system.
+BandDrip is an unofficial secondary glucose display and is not a medical device. Do not use it as the sole basis for treatment decisions. Data may be delayed, unavailable or incorrect. Verify important readings in the approved CGM/medical-device system.
 
-See [`docs/SAFETY.md`](docs/SAFETY.md) for the display-freshness rules.
+See [`docs/SAFETY.md`](docs/SAFETY.md).
 
 ## Contributing
 
