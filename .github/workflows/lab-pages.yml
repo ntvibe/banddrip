@@ -8,7 +8,9 @@ on:
       - 'tools/lab/**'
       - '.github/workflows/lab-pages.yml'
   push:
-    branches: [main]
+    branches:
+      - scaffold/public-mvp
+      - main
     paths:
       - 'apps/lab/**'
       - 'packages/devices/**'
