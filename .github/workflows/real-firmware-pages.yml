@@ -1,23 +1,8 @@
 name: Real firmware BandDrip Lab
 
+# Heavy research workflow: downloads and boots the full Xiaomi Vela/QEMU image.
+# Keep this manual-only so normal BandDrip development stays lightweight.
 on:
-  pull_request:
-    paths:
-      - 'apps/band/**'
-      - 'apps/lab/**'
-      - 'packages/devices/**'
-      - 'tools/vela-emulator/**'
-      - '.github/workflows/real-firmware-pages.yml'
-  push:
-    branches:
-      - scaffold/public-mvp
-      - main
-    paths:
-      - 'apps/band/**'
-      - 'apps/lab/**'
-      - 'packages/devices/**'
-      - 'tools/vela-emulator/**'
-      - '.github/workflows/real-firmware-pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -26,7 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: banddrip-real-firmware-pages-${{ github.event_name }}
+  group: banddrip-real-firmware-pages
   cancel-in-progress: true
 
 jobs:
@@ -152,18 +137,6 @@ jobs:
           }, null, 2))
           NODE
 
-      - name: Assemble GitHub Pages site with real firmware pixels
-        run: |
-          rm -rf .lab-dist
-          mkdir -p .lab-dist/devices .lab-dist/results .lab-dist/real
-          cp apps/lab/index.html apps/lab/styles.css apps/lab/app.js .lab-dist/
-          cp packages/devices/*.json .lab-dist/devices/
-          cp real-results/latest.json .lab-dist/results/real-firmware.json
-          cp firmware-shots/fresh-default.png firmware-shots/stale-glucose.png \
-             firmware-shots/large-three-digit.png firmware-shots/mmol-format.png \
-             firmware-shots/stale-iob.png firmware-shots/missing-delta.png .lab-dist/real/
-          touch .lab-dist/.nojekyll
-
       - name: Upload evidence bundle
         if: always()
         uses: actions/upload-artifact@v4
@@ -174,21 +147,3 @@ jobs:
             real-results/latest.json
             vela-emulator.log
           if-no-files-found: warn
-
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request' && success()
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: .lab-dist
-
-  deploy:
-    if: github.event_name != 'pull_request'
-    needs: render-real-firmware
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy real-firmware Lab to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
