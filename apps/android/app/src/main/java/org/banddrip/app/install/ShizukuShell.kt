@@ -3,6 +3,7 @@ package org.banddrip.app.install
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -55,6 +56,13 @@ object ShizukuShell {
             ?: error("Shizuku is not installed")
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launch)
+    }
+
+    fun openDownloadPage(context: Context): Result<Unit> = runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
     }
 
     suspend fun run(vararg command: String): Result = withContext(Dispatchers.IO) {
