@@ -1,6 +1,10 @@
 name: Experimental Vela emulator lab
 
 on:
+  pull_request:
+    paths:
+      - 'tools/vela-emulator/**'
+      - '.github/workflows/vela-emulator-lab.yml'
   workflow_dispatch:
     inputs:
       skin:
@@ -20,7 +24,7 @@ jobs:
     timeout-minutes: 35
     env:
       BANDDRIP_VVD_NAME: BandDrip_ProLab
-      BANDDRIP_VELA_SKIN: ${{ inputs.skin }}
+      BANDDRIP_VELA_SKIN: ${{ inputs.skin || 'xiaomi_band_pro' }}
       BANDDRIP_VELA_IMAGE: vela-miwear-watch-5.0
     steps:
       - uses: actions/checkout@v5
@@ -73,6 +77,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vela-emulator-evidence-${{ inputs.skin }}
+          name: vela-emulator-evidence-${{ env.BANDDRIP_VELA_SKIN }}
           path: emulator-evidence
           if-no-files-found: warn
