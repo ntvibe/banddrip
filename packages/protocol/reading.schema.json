@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://banddrip.dev/schema/reading.schema.json",
-  "title": "BandDripReading",
+  "title": "BandDripReadingPacket",
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "protocolVersion",
     "type",
     "glucose",
     "units",
@@ -13,6 +14,9 @@
     "trend"
   ],
   "properties": {
+    "protocolVersion": {
+      "const": 1
+    },
     "type": {
       "const": "reading"
     },
