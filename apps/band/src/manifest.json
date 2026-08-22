@@ -1,0 +1,29 @@
+{
+  "package": "org.banddrip.app",
+  "name": "BandDrip",
+  "icon": "/common/icon.svg",
+  "versionName": "0.1.0",
+  "versionCode": 1,
+  "minAPILevel": 1,
+  "deviceTypeList": ["watch"],
+  "features": [
+    { "name": "system.interconnect" }
+  ],
+  "config": {
+    "logLevel": "debug",
+    "designWidth": 212
+  },
+  "router": {
+    "entry": "Index",
+    "pages": {
+      "Index": {
+        "component": "index",
+        "path": "/",
+        "launchMode": "singleTask"
+      }
+    }
+  },
+  "display": {
+    "backgroundColor": "#000000"
+  }
+}
