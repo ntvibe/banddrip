@@ -29,11 +29,15 @@ echo "Deploying $(basename "$RPK") as $PKG to $SERIAL"
 "${ADB[@]}" shell "mkdir -p $APP_ROOT/$PKG"
 "${ADB[@]}" shell "unzip -o $APP_ROOT/$PKG.rpk -d $APP_ROOT/$PKG"
 
-# Vela's emulator runtime launches unpacked Quick Apps through vapp.
-"${ADB[@]}" shell "vapp app/$PKG >/tmp/banddrip-vapp.log 2>&1 &"
+# NuttX nsh supports the commands below but not GNU-style ls flags/redirection reliably.
+echo "Installed app files:"
+"${ADB[@]}" shell "ls $APP_ROOT/$PKG"
+
+echo "Launching through the Vela Quick App runtime..."
+"${ADB[@]}" shell "vapp app/$PKG &"
 sleep 4
 
-"${ADB[@]}" shell "ls -la $APP_ROOT/$PKG" || true
-"${ADB[@]}" shell "cat /tmp/banddrip-vapp.log" || true
+echo "Guest process snapshot after launch:"
+"${ADB[@]}" shell "ps" || true
 
 echo "BandDrip deploy command completed."
