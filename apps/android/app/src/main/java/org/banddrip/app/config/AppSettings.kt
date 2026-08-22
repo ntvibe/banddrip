@@ -42,7 +42,7 @@ data class RelaySettings(
     val backgroundEnabled: Boolean = false,
     val nightscoutUrl: String = "",
     val nightscoutToken: String = "",
-    val nightscoutPollMinutes: Int = 5,
+    val nightscoutPollMinutes: Int = 1,
     val xdripConnectionMode: XDripConnectionMode = XDripConnectionMode.LocalServer,
     val xdripServerUrl: String = "http://127.0.0.1:17580",
     val xdripServerSecret: String = "",
@@ -74,7 +74,7 @@ class AppSettingsStore(context: Context) {
             backgroundEnabled = prefs.getBoolean(KEY_BACKGROUND_ENABLED, false),
             nightscoutUrl = prefs.getString(KEY_NS_URL, "").orEmpty(),
             nightscoutToken = secrets.decrypt(prefs.getString(KEY_NS_TOKEN, null)).orEmpty(),
-            nightscoutPollMinutes = prefs.getInt(KEY_NS_POLL_MINUTES, 5).coerceIn(1, 30),
+            nightscoutPollMinutes = prefs.getInt(KEY_NS_POLL_MINUTES, 1).coerceIn(1, 30),
             xdripConnectionMode = xdripMode,
             xdripServerUrl = prefs.getString(KEY_XDRIP_SERVER_URL, "http://127.0.0.1:17580").orEmpty(),
             xdripServerSecret = secrets.decrypt(prefs.getString(KEY_XDRIP_SERVER_SECRET, null)).orEmpty(),
@@ -93,9 +93,6 @@ class AppSettingsStore(context: Context) {
     }
 
     fun save(settings: RelaySettings) {
-        // Accept either a clean Nightscout base URL or a full browser tracking URL
-        // containing ?token=... . Tokens are stripped from the persisted URL and
-        // stored encrypted in Android Keystore-backed ciphertext instead.
         val normalizedNightscout = runCatching {
             NightscoutEndpoint.parse(settings.nightscoutUrl, settings.nightscoutToken.ifBlank { null })
         }.getOrNull()
