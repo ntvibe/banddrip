@@ -34,6 +34,9 @@ jobs:
       - name: Verify emulator mock is disabled for committed builds
         run: node tools/assert-mock-off.mjs
 
+      - name: Run wearable logic tests
+        run: npm test
+
       - name: Build RPK
         run: npm run build
 
