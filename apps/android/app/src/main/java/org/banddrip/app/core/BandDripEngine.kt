@@ -1,5 +1,6 @@
 package org.banddrip.app.core
 
+import kotlinx.coroutines.CancellationException
 import org.banddrip.app.model.BandDripReading
 import org.banddrip.app.safety.ReadingValidator
 import org.banddrip.app.source.GlucoseSource
@@ -30,13 +31,20 @@ class BandDripEngine {
                 sourceId = source.id,
                 transportId = transport.id,
             )
-        } catch (error: Exception) {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
             EngineSnapshot(
                 reading = null,
                 sourceId = source.id,
                 transportId = transport.id,
-                errorMessage = error.message ?: error::class.java.simpleName,
+                errorMessage = safeErrorMessage(error),
             )
         }
+    }
+
+    private fun safeErrorMessage(error: Throwable): String {
+        val message = error.message?.trim().orEmpty()
+        return if (message.isNotBlank()) message.take(280) else error::class.java.simpleName
     }
 }
