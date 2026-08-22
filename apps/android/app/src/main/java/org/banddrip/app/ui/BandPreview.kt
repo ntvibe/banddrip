@@ -13,6 +13,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -22,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import org.banddrip.app.model.BandDripReading
 import org.banddrip.app.model.GlucoseUnits
 import org.banddrip.app.model.Trend
@@ -33,7 +39,15 @@ fun BandPreview(
     showIob: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val stale = reading == null || FreshnessPolicy.isStale(reading.glucoseTimestampMs)
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+
+    val stale = reading == null || FreshnessPolicy.isStale(reading.glucoseTimestampMs, nowMs)
     val mainColor = if (stale && reading != null) MaterialTheme.colorScheme.error else Color.White
 
     Box(
@@ -83,7 +97,7 @@ fun BandPreview(
                 )
                 Text("·", color = Color(0xFF6E6E73), fontSize = 16.sp)
                 Text(
-                    text = reading?.let { ageText(it.glucoseTimestampMs) } ?: "age —",
+                    text = reading?.let { ageText(it.glucoseTimestampMs, nowMs) } ?: "age —",
                     color = Color(0xFFB0B0B5),
                     fontSize = 16.sp,
                 )
@@ -91,7 +105,7 @@ fun BandPreview(
 
             if (showIob) {
                 Text(
-                    text = reading?.let(::iobText) ?: "IOB —",
+                    text = reading?.let { iobText(it, nowMs) } ?: "IOB —",
                     color = Color(0xFFD1D1D6),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
@@ -114,15 +128,15 @@ private fun deltaText(reading: BandDripReading): String {
     }
 }
 
-private fun ageText(timestampMs: Long): String {
-    val age = FreshnessPolicy.ageMinutes(timestampMs) ?: return "age —"
+private fun ageText(timestampMs: Long, nowMs: Long): String {
+    val age = FreshnessPolicy.ageMinutes(timestampMs, nowMs) ?: return "age —"
     return "${age}m ago"
 }
 
-private fun iobText(reading: BandDripReading): String {
+private fun iobText(reading: BandDripReading, nowMs: Long): String {
     val iob = reading.iobUnits ?: return "IOB —"
     val timestamp = reading.iobTimestampMs ?: return "IOB —"
-    if (FreshnessPolicy.isStale(timestamp)) return "IOB —"
+    if (FreshnessPolicy.isStale(timestamp, nowMs)) return "IOB —"
     return "IOB %.3f U".format(iob)
 }
 
