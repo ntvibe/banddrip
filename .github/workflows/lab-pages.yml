@@ -53,13 +53,13 @@ jobs:
           name: banddrip-lab-static
           path: .lab-dist
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' || github.head_ref == 'scaffold/public-mvp'
         uses: actions/upload-pages-artifact@v3
         with:
           path: .lab-dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.head_ref == 'scaffold/public-mvp'
     needs: build
     runs-on: ubuntu-latest
     environment:
