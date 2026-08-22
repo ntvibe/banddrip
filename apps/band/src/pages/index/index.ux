@@ -1,6 +1,8 @@
 <template>
   <div class="page">
     <div class="content">
+      <text if="{{devMockMode}}" class="demo-badge">DEMO</text>
+
       <div class="glucose-row">
         <text class="{{stale ? 'glucose glucose-stale' : 'glucose'}}">{{glucoseText}}</text>
         <text class="{{stale ? 'trend trend-stale' : 'trend'}}">{{trendText}}</text>
@@ -30,6 +32,13 @@
     height: 520px;
     padding-top: 92px;
     align-items: center;
+  }
+
+  .demo-badge {
+    position: absolute;
+    top: 32px;
+    font-size: 15px;
+    color: #6e6e73;
   }
 
   .glucose-row {
@@ -113,6 +122,11 @@
     isStale,
     trendArrow
   } from '../../common/reading.js'
+  import {
+    DEV_MOCK_MODE,
+    DEV_MOCK_SEQUENCE,
+    createMockReading
+  } from '../../common/dev-mock.js'
 
   export default {
     private: {
@@ -126,10 +140,21 @@
       stale: true,
       reading: null,
       refreshTimer: null,
-      connection: null
+      mockTimer: null,
+      mockIndex: 0,
+      connection: null,
+      devMockMode: DEV_MOCK_MODE
     },
 
     onInit() {
+      // Emulator development mode is deliberately opt-in and visibly marked DEMO.
+      // It never opens the production interconnect channel.
+      if (DEV_MOCK_MODE) {
+        this.startMockSequence()
+        this.refreshTimer = setInterval(() => this.refreshDisplay(), 30000)
+        return
+      }
+
       this.connection = interconnect.instance()
       this.connection.onmessage = (event) => this.handleMessage(event)
       this.connection.onopen = () => this.refreshDisplay()
@@ -150,7 +175,25 @@
 
     onDestroy() {
       if (this.refreshTimer) clearInterval(this.refreshTimer)
+      if (this.mockTimer) clearInterval(this.mockTimer)
       this.refreshTimer = null
+      this.mockTimer = null
+    },
+
+    startMockSequence() {
+      this.applyMockStep()
+      this.mockTimer = setInterval(() => {
+        this.mockIndex = (this.mockIndex + 1) % DEV_MOCK_SEQUENCE.length
+        this.applyMockStep()
+      }, 5000)
+    },
+
+    applyMockStep() {
+      const step = DEV_MOCK_SEQUENCE[this.mockIndex]
+      this.reading = createMockReading(step.ageMinutes)
+      this.hasReading = true
+      this.refreshDisplay()
+      console.info(`BandDrip DEMO state: ${step.label}`)
     },
 
     handleMessage(event) {
