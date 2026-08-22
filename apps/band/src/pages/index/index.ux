@@ -127,6 +127,7 @@
     DEV_MOCK_SEQUENCE,
     createMockReading
   } from '../../common/dev-mock.js'
+  import { isSupportedPacket } from '../../common/protocol.js'
 
   export default {
     private: {
@@ -202,6 +203,10 @@
         if (typeof payload === 'string') payload = JSON.parse(payload)
 
         if (!payload || !payload.type) return
+        if (!isSupportedPacket(payload)) {
+          console.error('BandDrip unsupported protocol packet')
+          return
+        }
 
         if (payload.type === 'settings') {
           if (typeof payload.showIob === 'boolean') this.showIob = payload.showIob
