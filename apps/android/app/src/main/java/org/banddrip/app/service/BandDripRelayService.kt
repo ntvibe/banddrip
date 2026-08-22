@@ -20,11 +20,13 @@ import kotlinx.coroutines.launch
 import org.banddrip.app.config.AppSettingsStore
 import org.banddrip.app.config.RelaySettings
 import org.banddrip.app.config.SourceMode
+import org.banddrip.app.config.XDripConnectionMode
 import org.banddrip.app.core.BandDripEngine
 import org.banddrip.app.core.RelayStateStore
 import org.banddrip.app.source.GlucoseSource
 import org.banddrip.app.source.MockGlucoseSource
 import org.banddrip.app.source.NightscoutSource
+import org.banddrip.app.source.XDripHttpSource
 import org.banddrip.app.source.XDripSource
 import org.banddrip.app.transport.VirtualBandTransport
 
@@ -102,24 +104,24 @@ class BandDripRelayService : Service() {
 
         val source = sourceFor(settings)
         if (source == null) {
-            stateStore.setStatus("Nightscout URL is missing")
-            updateNotification("Nightscout needs configuration")
+            stateStore.setStatus("Selected source is not configured")
+            updateNotification("Source needs configuration")
             return
         }
 
         val snapshot = engine.refresh(source, transport, settings.showIob)
         if (snapshot.errorMessage != null) {
             stateStore.setStatus("${snapshot.sourceId}: ${snapshot.errorMessage}")
-            updateNotification("${snapshot.sourceId}: error")
+            updateNotification("${snapshot.sourceId}: connection error")
             return
         }
 
         val reading = snapshot.reading
         if (reading != null) {
-            stateStore.saveReading(reading, "${snapshot.sourceId} → ${snapshot.transportId}")
+            stateStore.saveReading(reading, "${snapshot.sourceId} connected · reading received")
             updateNotification("${snapshot.sourceId}: ${displayGlucose(reading.glucose)} ${reading.units.wireValue}")
         } else {
-            stateStore.setStatus("${snapshot.sourceId}: waiting for glucose")
+            stateStore.setStatus("${snapshot.sourceId}: connected, waiting for glucose")
             updateNotification("${snapshot.sourceId}: waiting for glucose")
         }
     }
@@ -132,7 +134,13 @@ class BandDripRelayService : Service() {
                 accessToken = settings.nightscoutToken.ifBlank { null },
             )
         }
-        SourceMode.XDrip -> XDripSource(this)
+        SourceMode.XDrip -> when (settings.xdripConnectionMode) {
+            XDripConnectionMode.Broadcast -> XDripSource(this)
+            XDripConnectionMode.LocalServer -> XDripHttpSource(
+                serverUrl = settings.xdripServerUrl,
+                secret = settings.xdripServerSecret.ifBlank { null },
+            )
+        }
     }
 
     private fun intervalMs(settings: RelaySettings): Long = when (settings.sourceMode) {
@@ -142,7 +150,10 @@ class BandDripRelayService : Service() {
             30_000L
         }
         SourceMode.Nightscout -> settings.nightscoutPollMinutes.coerceIn(1, 30) * 60_000L
-        SourceMode.XDrip -> 30_000L
+        SourceMode.XDrip -> when (settings.xdripConnectionMode) {
+            XDripConnectionMode.Broadcast -> 30_000L
+            XDripConnectionMode.LocalServer -> 60_000L
+        }
     }
 
     private fun displayGlucose(value: Double): String = if (value % 1.0 == 0.0) {
@@ -198,10 +209,16 @@ class BandDripRelayService : Service() {
             .build()
     }
 
-    private fun summaryText(): String = when (settingsStore.load().sourceMode) {
-        SourceMode.Mock -> "Mock source"
-        SourceMode.Nightscout -> "Nightscout source"
-        SourceMode.XDrip -> "xDrip broadcast source"
+    private fun summaryText(): String {
+        val settings = settingsStore.load()
+        return when (settings.sourceMode) {
+            SourceMode.Mock -> "Mock source"
+            SourceMode.Nightscout -> "Nightscout source"
+            SourceMode.XDrip -> when (settings.xdripConnectionMode) {
+                XDripConnectionMode.Broadcast -> "xDrip broadcast source"
+                XDripConnectionMode.LocalServer -> "xDrip local server"
+            }
+        }
     }
 
     companion object {
