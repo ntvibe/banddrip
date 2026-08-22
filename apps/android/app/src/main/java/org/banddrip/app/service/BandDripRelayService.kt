@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,7 +54,7 @@ class BandDripRelayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        enterForeground(summaryText())
+        enterForeground(summaryTextSafe())
         when (intent?.action) {
             ACTION_STOP -> {
                 settingsStore.setBackgroundEnabled(false)
@@ -81,48 +82,65 @@ class BandDripRelayService : Service() {
         if (loopJob?.isActive == true) return
         loopJob = scope.launch {
             while (isActive) {
-                val settings = settingsStore.load()
-                if (!settings.backgroundEnabled) {
-                    stateStore.setStatus("Background relay disabled")
-                    delay(2_000)
-                    continue
-                }
+                try {
+                    val settings = settingsStore.load()
+                    if (!settings.backgroundEnabled) {
+                        stateStore.setStatus("Background relay disabled")
+                        delay(2_000)
+                        continue
+                    }
 
-                val now = System.currentTimeMillis()
-                if (now >= nextDueAtMs) {
-                    runOnce(force = false)
-                    nextDueAtMs = now + intervalMs(settings)
+                    val now = System.currentTimeMillis()
+                    if (now >= nextDueAtMs) {
+                        runOnce(force = false)
+                        nextDueAtMs = now + intervalMs(settings)
+                    }
+                    delay(1_000)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    val message = safeError(error)
+                    stateStore.setStatus("Relay recovered from error: $message")
+                    updateNotification("Relay error · retrying")
+                    delay(5_000)
                 }
-                delay(1_000)
             }
         }
     }
 
     private suspend fun runOnce(force: Boolean) {
-        val settings = settingsStore.load()
-        if (!settings.backgroundEnabled && !force) return
+        try {
+            val settings = settingsStore.load()
+            if (!settings.backgroundEnabled && !force) return
 
-        val source = sourceFor(settings)
-        if (source == null) {
-            stateStore.setStatus("Selected source is not configured")
-            updateNotification("Source needs configuration")
-            return
-        }
+            val source = sourceFor(settings)
+            if (source == null) {
+                stateStore.setStatus("Selected source is not configured")
+                updateNotification("Source needs configuration")
+                return
+            }
 
-        val snapshot = engine.refresh(source, transport, settings.showIob)
-        if (snapshot.errorMessage != null) {
-            stateStore.setStatus("${snapshot.sourceId}: ${snapshot.errorMessage}")
-            updateNotification("${snapshot.sourceId}: connection error")
-            return
-        }
+            val snapshot = engine.refresh(source, transport, settings.showIob)
+            if (snapshot.errorMessage != null) {
+                stateStore.setStatus("${snapshot.sourceId}: ${snapshot.errorMessage}")
+                updateNotification("${snapshot.sourceId}: connection error")
+                return
+            }
 
-        val reading = snapshot.reading
-        if (reading != null) {
-            stateStore.saveReading(reading, "${snapshot.sourceId} connected · reading received")
-            updateNotification("${snapshot.sourceId}: ${displayGlucose(reading.glucose)} ${reading.units.wireValue}")
-        } else {
-            stateStore.setStatus("${snapshot.sourceId}: connected, waiting for glucose")
-            updateNotification("${snapshot.sourceId}: waiting for glucose")
+            val reading = snapshot.reading
+            if (reading != null) {
+                stateStore.saveReading(reading, "${snapshot.sourceId} connected · reading received")
+                updateNotification("${snapshot.sourceId}: ${displayGlucose(reading.glucose)} ${reading.units.wireValue}")
+            } else {
+                stateStore.setStatus("${snapshot.sourceId}: connected, waiting for glucose")
+                updateNotification("${snapshot.sourceId}: waiting for glucose")
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            val message = safeError(error)
+            stateStore.setStatus("Source error: $message")
+            updateNotification("Source error · check BandDrip")
         }
     }
 
@@ -161,6 +179,9 @@ class BandDripRelayService : Service() {
     } else {
         "%.1f".format(value)
     }
+
+    private fun safeError(error: Throwable): String =
+        error.message?.trim()?.takeIf { it.isNotBlank() }?.take(220) ?: error::class.java.simpleName
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -209,9 +230,9 @@ class BandDripRelayService : Service() {
             .build()
     }
 
-    private fun summaryText(): String {
+    private fun summaryTextSafe(): String = runCatching {
         val settings = settingsStore.load()
-        return when (settings.sourceMode) {
+        when (settings.sourceMode) {
             SourceMode.Mock -> "Mock source"
             SourceMode.Nightscout -> "Nightscout source"
             SourceMode.XDrip -> when (settings.xdripConnectionMode) {
@@ -219,7 +240,7 @@ class BandDripRelayService : Service() {
                 XDripConnectionMode.LocalServer -> "xDrip local server"
             }
         }
-    }
+    }.getOrElse { "BandDrip relay" }
 
     companion object {
         const val ACTION_REFRESH_NOW = "org.banddrip.action.REFRESH_NOW"
