@@ -73,24 +73,16 @@ in:
 
 `apps/band/src/common/dev-mock.js`
 
-When enabled, BandDrip displays a visible `DEMO` marker and cycles every 5 seconds between:
+When enabled, BandDrip displays a visible `DEMO` marker and cycles through a new scenario every 5 seconds:
 
-### Fresh
+1. **Fresh default** — `112 ↘`, `+6 · 3m ago`, `IOB 0.250 U`.
+2. **Stale glucose** — same reading at `12m ago`; glucose and arrow red, glucose natively struck through.
+3. **Large 3-digit** — `350 ↑`, `+22`, testing the widest common mg/dL layout.
+4. **mmol/L formatting** — `6.2 →`, `+0.3`, exercising decimal glucose/delta.
+5. **Stale IOB** — fresh glucose with 12-minute-old IOB; the band must render `IOB —`.
+6. **Missing delta** — fresh glucose with no valid previous reading; the band must render `Δ —`.
 
-- glucose: `112`
-- trend: `↘`
-- delta: `+6`
-- freshness: `3m ago`
-- IOB: `0.250 U`
-
-### Stale
-
-- same glucose payload
-- freshness: `12m ago`
-- glucose + arrow become red
-- glucose receives a strike-through line
-
-This lets layout and stale-state behavior be checked immediately rather than waiting ten minutes.
+The scenario objects live in `DEV_MOCK_SEQUENCE`, so additional display edge cases can be added without changing production transport code.
 
 ## Release protection
 
@@ -103,15 +95,19 @@ Mock data must never be used as a fallback when real glucose data is absent. Pro
 Before moving from emulator work to the physical Band 10:
 
 - [ ] `112 ↘` fits without clipping
+- [ ] `350 ↑` fits without clipping
+- [ ] mmol/L decimal values fit without clipping
 - [ ] trend arrow is visually secondary to glucose
 - [ ] `+6 · 3m ago` is clearly readable but ~half the glucose scale
 - [ ] `IOB 0.250 U` remains readable at the bottom
 - [ ] capsule edges do not clip any text
 - [ ] fresh state is not red
 - [ ] stale state is unmistakably red + struck through
+- [ ] strike-through follows the glucose text width rather than a fixed pixel width
 - [ ] exact stale age remains visible
 - [ ] missing glucose displays `—`, never the last value as current
-- [ ] IOB disappears/becomes unavailable when its own timestamp is stale
+- [ ] stale IOB displays `IOB —`
+- [ ] missing previous glucose displays `Δ —`
 - [ ] no medical disclaimer is placed on the normal band display
 
 After these pass, the next test is the Android companion + `system.interconnect` on a real global Smart Band 10.
