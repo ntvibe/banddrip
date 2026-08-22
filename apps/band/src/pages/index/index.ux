@@ -182,7 +182,7 @@
 
     applyMockStep() {
       const step = DEV_MOCK_SEQUENCE[this.mockIndex]
-      this.reading = createMockReading(step.ageMinutes)
+      this.reading = createMockReading(step)
       this.hasReading = true
       this.refreshDisplay()
       console.info(`BandDrip DEMO state: ${step.label}`)
