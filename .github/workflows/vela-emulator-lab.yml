@@ -1,6 +1,9 @@
 name: Experimental Vela emulator lab
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/vela-emulator-lab.yml'
   workflow_dispatch:
     inputs:
       skin:
@@ -31,7 +34,12 @@ jobs:
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
       - name: Install emulator host dependencies
-        run: sudo apt-get update && sudo apt-get install -y xvfb adb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb adb libpulse0 libgl1 libnss3 libxkbcommon0 \
+            libxcomposite1 libxcursor1 libxi6 libxtst6 libxrandr2 \
+            libasound2t64 libdbus-1-3 libfontconfig1
       - name: Install Xiaomi Vela emulator tooling
         run: npm install --no-save aiot-toolkit@2.0.5 @aiot-toolkit/emulator
       - name: Download Vela emulator environment
