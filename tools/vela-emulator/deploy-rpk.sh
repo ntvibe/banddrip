@@ -29,9 +29,13 @@ echo "Deploying $(basename "$RPK") as $PKG to $SERIAL"
 "${ADB[@]}" shell "mkdir -p $APP_ROOT/$PKG"
 "${ADB[@]}" shell "unzip -o $APP_ROOT/$PKG.rpk -d $APP_ROOT/$PKG"
 
-# NuttX nsh supports the commands below but not GNU-style ls flags/redirection reliably.
 echo "Installed app files:"
 "${ADB[@]}" shell "ls $APP_ROOT/$PKG"
+
+if [ "${BANDDRIP_DEPLOY_NO_LAUNCH:-0}" = "1" ]; then
+  echo "Installed only; launch delegated to Xiaomi emulator SDK."
+  exit 0
+fi
 
 echo "Launching through the Vela Quick App runtime..."
 "${ADB[@]}" shell "vapp app/$PKG &"
