@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "aiot start --watch",
+    "test": "node --experimental-default-type=module --test tests/*.test.js",
     "build": "aiot build",
     "release": "node tools/assert-mock-off.mjs && aiot release"
   },
