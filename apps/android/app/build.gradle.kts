@@ -25,6 +25,23 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    val useSharedDebugSigning = System.getenv("BANDDRIP_USE_SHARED_DEBUG_SIGNING") == "true"
+    if (useSharedDebugSigning) {
+        signingConfigs {
+            create("banddripSharedDebug") {
+                storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+        buildTypes {
+            getByName("debug") {
+                signingConfig = signingConfigs.getByName("banddripSharedDebug")
+            }
+        }
+    }
+
     sourceSets["main"].assets.srcDir("../../../packages/display-spec")
 }
 
