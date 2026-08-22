@@ -38,37 +38,39 @@ jobs:
         run: npx aiot initEmulatorEnv
       - name: Create virtual Xiaomi band
         run: node tools/vela-emulator/create-vvd.cjs
-      - name: Start virtual band under Xvfb
-        run: |
-          nohup xvfb-run -a node tools/vela-emulator/start-vvd.cjs > vela-emulator.log 2>&1 &
-          echo $! > vela-emulator.pid
-      - name: Wait for emulator ADB
-        run: |
-          for i in $(seq 1 90); do
-            if adb devices | grep -q 'emulator-.*device'; then adb devices; exit 0; fi
-            sleep 2
-          done
-          echo 'Vela emulator did not expose ADB in time.' >&2
-          cat vela-emulator.log || true
-          exit 1
-      - name: Build BandDrip RPK
+      - name: Build BandDrip RPK before boot
         working-directory: apps/band
         run: |
           npm install
           npm test
           npm run build
+      - name: Start virtual band under Xvfb
+        run: |
+          adb start-server
+          nohup xvfb-run -a node tools/vela-emulator/start-vvd.cjs > vela-emulator.log 2>&1 &
+          echo $! > vela-emulator.pid
+      - name: Wait for emulator ADB
+        run: |
+          for i in $(seq 1 150); do
+            if adb devices | grep -q 'emulator-.*device'; then adb devices; exit 0; fi
+            sleep 2
+          done
+          echo 'Vela emulator did not expose ADB in time.' >&2
+          exit 1
       - name: Attempt BandDrip deployment through aiot tooling
         working-directory: apps/band
         continue-on-error: true
         run: timeout 120s npx aiot start || true
       - name: Capture virtual-device evidence
+        if: always()
         run: |
           mkdir -p emulator-evidence
-          adb devices > emulator-evidence/adb-devices.txt
+          adb devices > emulator-evidence/adb-devices.txt 2>&1 || true
           adb shell wm size > emulator-evidence/wm-size.txt 2>&1 || true
           adb exec-out screencap -p > emulator-evidence/screen.png 2>/dev/null || true
-          cp vela-emulator.log emulator-evidence/vela-emulator.log || true
-          find apps/band/dist -type f -name '*.rpk' -exec cp {} emulator-evidence/ \; || true
+          ps aux > emulator-evidence/processes.txt 2>&1 || true
+          cp vela-emulator.log emulator-evidence/vela-emulator.log 2>/dev/null || true
+          find apps/band/dist -type f -name '*.rpk' -exec cp {} emulator-evidence/ \; 2>/dev/null || true
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
