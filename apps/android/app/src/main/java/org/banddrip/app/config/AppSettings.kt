@@ -11,11 +11,17 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import org.banddrip.app.model.GlucoseUnits
 import org.banddrip.app.model.Trend
+import org.banddrip.app.source.NightscoutEndpoint
 
 enum class SourceMode(val wireValue: String) {
     Mock("mock"),
     Nightscout("nightscout"),
     XDrip("xdrip"),
+}
+
+enum class XDripConnectionMode(val wireValue: String) {
+    Broadcast("broadcast"),
+    LocalServer("local-server"),
 }
 
 data class MockSettings(
@@ -37,6 +43,9 @@ data class RelaySettings(
     val nightscoutUrl: String = "",
     val nightscoutToken: String = "",
     val nightscoutPollMinutes: Int = 5,
+    val xdripConnectionMode: XDripConnectionMode = XDripConnectionMode.LocalServer,
+    val xdripServerUrl: String = "http://127.0.0.1:17580",
+    val xdripServerSecret: String = "",
     val mock: MockSettings = MockSettings(),
 )
 
@@ -55,6 +64,9 @@ class AppSettingsStore(context: Context) {
         val trend = Trend.entries.firstOrNull {
             it.wireValue == prefs.getString(KEY_MOCK_TREND, Trend.FortyFiveDown.wireValue)
         } ?: Trend.FortyFiveDown
+        val xdripMode = XDripConnectionMode.entries.firstOrNull {
+            it.wireValue == prefs.getString(KEY_XDRIP_MODE, XDripConnectionMode.LocalServer.wireValue)
+        } ?: XDripConnectionMode.LocalServer
 
         return RelaySettings(
             sourceMode = source,
@@ -63,6 +75,9 @@ class AppSettingsStore(context: Context) {
             nightscoutUrl = prefs.getString(KEY_NS_URL, "").orEmpty(),
             nightscoutToken = secrets.decrypt(prefs.getString(KEY_NS_TOKEN, null)).orEmpty(),
             nightscoutPollMinutes = prefs.getInt(KEY_NS_POLL_MINUTES, 5).coerceIn(1, 30),
+            xdripConnectionMode = xdripMode,
+            xdripServerUrl = prefs.getString(KEY_XDRIP_SERVER_URL, "http://127.0.0.1:17580").orEmpty(),
+            xdripServerSecret = secrets.decrypt(prefs.getString(KEY_XDRIP_SERVER_SECRET, null)).orEmpty(),
             mock = MockSettings(
                 glucose = prefs.getString(KEY_MOCK_GLUCOSE, null)?.toDoubleOrNull() ?: 112.0,
                 delta = prefs.getString(KEY_MOCK_DELTA, null)?.let { if (it == "null") null else it.toDoubleOrNull() } ?: 6.0,
@@ -78,13 +93,25 @@ class AppSettingsStore(context: Context) {
     }
 
     fun save(settings: RelaySettings) {
-        val encryptedToken = if (settings.nightscoutToken.isBlank()) null else secrets.encrypt(settings.nightscoutToken)
+        // Accept either a clean Nightscout base URL or a full browser tracking URL
+        // containing ?token=... . Tokens are stripped from the persisted URL and
+        // stored encrypted in Android Keystore-backed ciphertext instead.
+        val normalizedNightscout = runCatching {
+            NightscoutEndpoint.parse(settings.nightscoutUrl, settings.nightscoutToken.ifBlank { null })
+        }.getOrNull()
+        val storedNsUrl = normalizedNightscout?.baseUrl ?: settings.nightscoutUrl.trim()
+        val storedNsToken = normalizedNightscout?.token ?: settings.nightscoutToken.trim().takeIf { it.isNotBlank() }
+        val encryptedNsToken = storedNsToken?.let(secrets::encrypt)
+        val encryptedXdripSecret = settings.xdripServerSecret.trim().takeIf { it.isNotBlank() }?.let(secrets::encrypt)
+
         prefs.edit()
             .putString(KEY_SOURCE, settings.sourceMode.wireValue)
             .putBoolean(KEY_SHOW_IOB, settings.showIob)
             .putBoolean(KEY_BACKGROUND_ENABLED, settings.backgroundEnabled)
-            .putString(KEY_NS_URL, settings.nightscoutUrl.trim())
+            .putString(KEY_NS_URL, storedNsUrl)
             .putInt(KEY_NS_POLL_MINUTES, settings.nightscoutPollMinutes.coerceIn(1, 30))
+            .putString(KEY_XDRIP_MODE, settings.xdripConnectionMode.wireValue)
+            .putString(KEY_XDRIP_SERVER_URL, settings.xdripServerUrl.trim().trimEnd('/'))
             .putString(KEY_MOCK_GLUCOSE, settings.mock.glucose.toString())
             .putString(KEY_MOCK_DELTA, settings.mock.delta?.toString() ?: "null")
             .putInt(KEY_MOCK_AGE, settings.mock.ageMinutes.coerceIn(0, 240))
@@ -97,7 +124,8 @@ class AppSettingsStore(context: Context) {
             .apply()
 
         prefs.edit().apply {
-            if (encryptedToken == null) remove(KEY_NS_TOKEN) else putString(KEY_NS_TOKEN, encryptedToken)
+            if (encryptedNsToken == null) remove(KEY_NS_TOKEN) else putString(KEY_NS_TOKEN, encryptedNsToken)
+            if (encryptedXdripSecret == null) remove(KEY_XDRIP_SERVER_SECRET) else putString(KEY_XDRIP_SERVER_SECRET, encryptedXdripSecret)
         }.apply()
     }
 
@@ -113,6 +141,9 @@ class AppSettingsStore(context: Context) {
         private const val KEY_NS_URL = "nightscout-url"
         private const val KEY_NS_TOKEN = "nightscout-token-encrypted"
         private const val KEY_NS_POLL_MINUTES = "nightscout-poll-minutes"
+        private const val KEY_XDRIP_MODE = "xdrip-mode"
+        private const val KEY_XDRIP_SERVER_URL = "xdrip-server-url"
+        private const val KEY_XDRIP_SERVER_SECRET = "xdrip-server-secret-encrypted"
         private const val KEY_MOCK_GLUCOSE = "mock-glucose"
         private const val KEY_MOCK_DELTA = "mock-delta"
         private const val KEY_MOCK_AGE = "mock-age"
@@ -172,7 +203,7 @@ private class KeystoreSecretBox {
     }
 
     companion object {
-        private const val KEY_ALIAS = "banddrip-nightscout-token-v1"
+        private const val KEY_ALIAS = "banddrip-secrets-v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
 }
