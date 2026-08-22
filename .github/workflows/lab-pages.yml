@@ -35,6 +35,8 @@ jobs:
           node-version: '22'
       - name: Validate device profiles
         run: node tools/lab/validate-devices.mjs
+      - name: Syntax-check Lab JavaScript
+        run: node --check apps/lab/app.js
       - name: Assemble static Lab
         run: |
           rm -rf .lab-dist
