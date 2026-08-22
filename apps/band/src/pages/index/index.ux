@@ -6,7 +6,6 @@
       <div class="glucose-row">
         <text class="{{stale ? 'glucose glucose-stale' : 'glucose'}}">{{glucoseText}}</text>
         <text class="{{stale ? 'trend trend-stale' : 'trend'}}">{{trendText}}</text>
-        <div if="{{stale && hasReading}}" class="strike"></div>
       </div>
 
       <div class="meta-row">
@@ -47,7 +46,6 @@
     justify-content: center;
     align-items: center;
     flex-direction: row;
-    position: relative;
   }
 
   .glucose {
@@ -63,18 +61,13 @@
     color: #ffffff;
   }
 
-  .glucose-stale,
-  .trend-stale {
+  .glucose-stale {
     color: #ff3b30;
+    text-decoration: line-through;
   }
 
-  .strike {
-    position: absolute;
-    left: 27px;
-    top: 57px;
-    width: 118px;
-    height: 4px;
-    background-color: #ff3b30;
+  .trend-stale {
+    color: #ff3b30;
   }
 
   .meta-row {
