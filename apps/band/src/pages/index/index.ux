@@ -116,9 +116,11 @@
     trendArrow
   } from '../../common/reading.js'
   import {
+    DEV_MOCK_FIXED_LABEL,
     DEV_MOCK_MODE,
     DEV_MOCK_SEQUENCE,
-    createMockReading
+    createMockReading,
+    mockIndexForLabel
   } from '../../common/dev-mock.js'
   import { persistGlanceSettings, persistGlanceState } from '../../common/glance-store.js'
   import { isSupportedPacket } from '../../common/protocol.js'
@@ -174,7 +176,10 @@
     },
 
     startMockSequence() {
+      this.mockIndex = mockIndexForLabel(DEV_MOCK_FIXED_LABEL)
       this.applyMockStep()
+      if (DEV_MOCK_FIXED_LABEL) return
+
       this.mockTimer = setInterval(() => {
         this.mockIndex = (this.mockIndex + 1) % DEV_MOCK_SEQUENCE.length
         this.applyMockStep()
@@ -185,7 +190,8 @@
       const step = DEV_MOCK_SEQUENCE[this.mockIndex]
       this.reading = createMockReading(step)
       this.hasReading = true
-      persistGlanceState(this.reading, this.showIob)
+      // Emulator fixtures intentionally avoid persistent-file I/O so firmware
+      // rendering tests isolate the exact production layout from transport/storage.
       this.refreshDisplay()
       console.info(`BandDrip DEMO state: ${step.label}`)
     },
