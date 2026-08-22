@@ -65,6 +65,11 @@ const script = `<script>\nexport default {\n  private: ${JSON.stringify({
 const targetPage = path.join(projectDir, 'src/pages/index/index.ux')
 fs.writeFileSync(targetPage, `${template}\n\n${style}\n\n${script}\n`)
 
+// aiot-toolkit scans source modules for @system.* imports even when a module is
+// unreachable from this fixture page. Remove the production persistence module
+// from the ephemeral render tree so the visual build has no system-file feature.
+fs.rmSync(path.join(projectDir, 'src/common/glance-store.js'), { force: true })
+
 const manifest = JSON.parse(fs.readFileSync(baseManifest, 'utf8'))
 manifest.features = []
 manifest.config = {
