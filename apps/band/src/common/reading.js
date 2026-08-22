@@ -31,7 +31,7 @@ export function isStale(timestampMs, nowMs) {
 }
 
 export function formatDelta(delta, units) {
-  if (delta === null || delta === undefined || Number.isNaN(delta)) return 'Δ —'
+  if (delta === null || delta === undefined || isNaN(Number(delta))) return 'Δ —'
 
   const decimals = units === 'mmol/L' ? 1 : 0
   const rounded = Number(delta).toFixed(decimals)
@@ -39,7 +39,7 @@ export function formatDelta(delta, units) {
 }
 
 export function formatGlucose(glucose, units) {
-  if (glucose === null || glucose === undefined || Number.isNaN(glucose)) return '—'
+  if (glucose === null || glucose === undefined || isNaN(Number(glucose))) return '—'
   return units === 'mmol/L' ? Number(glucose).toFixed(1) : String(Math.round(glucose))
 }
 
@@ -49,6 +49,6 @@ export function formatAge(timestampMs, nowMs) {
 }
 
 export function formatIob(iobUnits) {
-  if (iobUnits === null || iobUnits === undefined || Number.isNaN(iobUnits)) return 'IOB —'
+  if (iobUnits === null || iobUnits === undefined || isNaN(Number(iobUnits))) return 'IOB —'
   return `IOB ${Number(iobUnits).toFixed(3)} U`
 }
