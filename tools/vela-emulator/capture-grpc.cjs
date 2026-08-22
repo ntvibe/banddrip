@@ -65,6 +65,24 @@ function clientFor(port, protoPath) {
   return new Controller(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
 }
 
+function sendMouse(client, x, y, buttons) {
+  return new Promise((resolve, reject) => {
+    client.sendMouse({x, y, buttons, display:0}, {deadline:Date.now()+3000}, err => {
+      if (err) reject(err); else resolve();
+    });
+  });
+}
+
+async function wakeDisplay(client) {
+  // The headless wearable image can remain in an OLED-off state even while a
+  // Quick App launches. A tiny edge click wakes it without intentionally
+  // activating central application controls.
+  await sendMouse(client, 2, 2, 1);
+  await new Promise(r => setTimeout(r, 90));
+  await sendMouse(client, 2, 2, 0);
+  await new Promise(r => setTimeout(r, 650));
+}
+
 function screenshot(client, output) {
   return new Promise((resolve, reject) => {
     client.getScreenshot({format:'PNG', width:0, height:0, display:0}, {deadline: Date.now()+5000}, (err, response) => {
@@ -92,8 +110,9 @@ async function main() {
     try {
       for (let attempt=1; attempt<=4; attempt++) {
         try {
+          await wakeDisplay(client);
           const result = await screenshot(client, output);
-          console.log(JSON.stringify({status:'ok', port, proto, output, ...result}));
+          console.log(JSON.stringify({status:'ok', port, proto, output, wokeDisplay:true, ...result}));
           client.close();
           return;
         } catch (err) {
