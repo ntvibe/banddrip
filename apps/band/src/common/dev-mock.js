@@ -1,6 +1,7 @@
 // Emulator-only development fixtures.
-// Keep DEV_MOCK_MODE false in committed production code.
+// Keep DEV_MOCK_MODE false and DEV_MOCK_FIXED_LABEL empty in committed production code.
 export const DEV_MOCK_MODE = false
+export const DEV_MOCK_FIXED_LABEL = ''
 
 export const DEV_MOCK_SEQUENCE = [
   {
@@ -65,10 +66,17 @@ export const DEV_MOCK_SEQUENCE = [
   }
 ]
 
+export function mockIndexForLabel(label) {
+  if (!label) return 0
+  const index = DEV_MOCK_SEQUENCE.findIndex(step => step.label === label)
+  return index >= 0 ? index : 0
+}
+
 export function createMockReading(step) {
   const now = Date.now()
   return {
     type: 'reading',
+    protocolVersion: 1,
     glucose: step.glucose,
     units: step.units,
     delta: step.delta,
