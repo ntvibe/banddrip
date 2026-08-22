@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.banddrip.app.install.BandBundleManager
@@ -44,7 +45,7 @@ fun BandSetupPanel() {
     val bundle = remember(tick) { BandBundleManager.status(context) }
     val shizuku = remember(tick) { ShizukuShell.status(context) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(androidx.compose.ui.unit.dp(9f))) {
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text("Band setup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
             "The Android APK carries its matching Vela RPK. BandDrip chooses the least-friction installer path available on this phone.",
@@ -118,7 +119,7 @@ fun BandSetupPanel() {
             ) { Text("Grant BandDrip Shizuku permission") }
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(androidx.compose.ui.unit.dp(8f))) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 modifier = Modifier.weight(1f),
                 onClick = {
