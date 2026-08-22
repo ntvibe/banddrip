@@ -1,0 +1,40 @@
+name: Vela build
+
+on:
+  pull_request:
+    paths:
+      - 'apps/band/**'
+      - '.github/workflows/vela-build.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/band/**'
+      - '.github/workflows/vela-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/band
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/band/package-lock.json
+
+      - name: Install Vela tooling
+        run: npm install
+
+      - name: Verify emulator mock is disabled for committed builds
+        run: node tools/assert-mock-off.mjs
+
+      - name: Build RPK
+        run: npm run build
