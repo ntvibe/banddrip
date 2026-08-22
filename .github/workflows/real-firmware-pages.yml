@@ -96,6 +96,18 @@ jobs:
           echo 'Xiaomi Vela emulator did not expose ADB in time.' >&2
           exit 1
 
+      - name: Calibrate renderer with known-working Songbird Quick App
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/xiaomi-band-development
+          git clone --depth 1 --branch develop https://github.com/oryonatan/xiaomi-band-development.git /tmp/xiaomi-band-development
+          (cd /tmp/xiaomi-band-development/examples/songbird && npm install && npm run build)
+          bash tools/vela-emulator/deploy-rpk.sh /tmp/xiaomi-band-development/examples/songbird
+          sleep 1
+          mkdir -p firmware-shots
+          node tools/vela-emulator/capture-grpc.cjs firmware-shots/calibration-songbird.png
+          python3 tools/vela-emulator/assert-visible-png.py firmware-shots/calibration-songbird.png
+
       - name: Render and verify real-firmware BandDrip fixtures
         run: |
           set -euo pipefail
@@ -147,10 +159,13 @@ jobs:
           cp apps/lab/index.html apps/lab/styles.css apps/lab/app.js .lab-dist/
           cp packages/devices/*.json .lab-dist/devices/
           cp real-results/latest.json .lab-dist/results/real-firmware.json
-          cp firmware-shots/*.png .lab-dist/real/
+          cp firmware-shots/fresh-default.png firmware-shots/stale-glucose.png \
+             firmware-shots/large-three-digit.png firmware-shots/mmol-format.png \
+             firmware-shots/stale-iob.png firmware-shots/missing-delta.png .lab-dist/real/
           touch .lab-dist/.nojekyll
 
       - name: Upload evidence bundle
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: banddrip-real-firmware-preview
@@ -158,9 +173,10 @@ jobs:
             firmware-shots
             real-results/latest.json
             vela-emulator.log
+          if-no-files-found: warn
 
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && success()
         uses: actions/upload-pages-artifact@v3
         with:
           path: .lab-dist
