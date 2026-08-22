@@ -39,6 +39,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // Optional installer accelerator. BandDrip still works without Shizuku.
+    // On Android 11+ Shizuku can be started using the phone's wireless-debugging flow.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260719")
 }
