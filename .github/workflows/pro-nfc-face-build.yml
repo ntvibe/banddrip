@@ -37,13 +37,15 @@ jobs:
           Copy-Item -Recurse 'experiments\pro-nfc-face-v1\app' (Join-Path $fprjDir 'app')
           $src = Get-Content 'experiments\pro-nfc-face-v1\BandDripProNfc.fprj' -Raw
           Set-Content -Path (Join-Path $fprjDir 'BandDripProNfc.fprj') -Value $src -Encoding Unicode
+          New-Item -ItemType Directory -Force (Join-Path $fprjDir 'images') | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $fprjDir 'output') | Out-Null
 
       - name: Generate 336x480 preview resource
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Drawing
           $template = "$env:RUNNER_TEMP\LuaDevTemplate"
-          $path = Join-Path $template 'watchface\fprj\preview_rgba.png'
+          $path = Join-Path $template 'watchface\fprj\images\preview_rgba.png'
           $bmp = [System.Drawing.Bitmap]::new(336, 480)
           $g = [System.Drawing.Graphics]::FromImage($bmp)
           $g.Clear([System.Drawing.Color]::Black)
