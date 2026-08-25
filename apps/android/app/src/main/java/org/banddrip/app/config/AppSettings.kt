@@ -126,6 +126,20 @@ class AppSettingsStore(context: Context) {
         }.apply()
     }
 
+    fun saveBandAuthKey(authKey: String) {
+        val normalized = authKey.trim().lowercase()
+        require(normalized.matches(Regex("[0-9a-f]{32}"))) { "Band AuthKey must be 32 hexadecimal characters" }
+        prefs.edit().putString(KEY_BAND_AUTH_KEY, secrets.encrypt(normalized)).apply()
+    }
+
+    fun loadBandAuthKey(): String? = secrets.decrypt(prefs.getString(KEY_BAND_AUTH_KEY, null))
+
+    fun hasBandAuthKey(): Boolean = !loadBandAuthKey().isNullOrBlank()
+
+    fun clearBandAuthKey() {
+        prefs.edit().remove(KEY_BAND_AUTH_KEY).apply()
+    }
+
     fun setBackgroundEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_BACKGROUND_ENABLED, enabled).apply()
     }
@@ -137,10 +151,11 @@ class AppSettingsStore(context: Context) {
         private const val KEY_BACKGROUND_ENABLED = "background-enabled"
         private const val KEY_NS_URL = "nightscout-url"
         private const val KEY_NS_TOKEN = "nightscout-token-encrypted"
+        private const val KEY_XDRIP_SERVER_SECRET = "xdrip-server-secret-encrypted"
+        private const val KEY_BAND_AUTH_KEY = "band-auth-key-encrypted"
         private const val KEY_NS_POLL_MINUTES = "nightscout-poll-minutes"
         private const val KEY_XDRIP_MODE = "xdrip-mode"
         private const val KEY_XDRIP_SERVER_URL = "xdrip-server-url"
-        private const val KEY_XDRIP_SERVER_SECRET = "xdrip-server-secret-encrypted"
         private const val KEY_MOCK_GLUCOSE = "mock-glucose"
         private const val KEY_MOCK_DELTA = "mock-delta"
         private const val KEY_MOCK_AGE = "mock-age"
