@@ -29,35 +29,39 @@ jobs:
           $root = Join-Path $env:GITHUB_WORKSPACE 'experiments\pro-nfc-watchface-v1'
           $images = Join-Path $root 'images'
           $bin = Join-Path $root 'bin'
-          New-Item -ItemType Directory -Force -Path $images, $bin | Out-Null
+          $scratch = Join-Path $root 'output'
+          New-Item -ItemType Directory -Force -Path $images, $bin, $scratch | Out-Null
 
-          # The community EasyFace projects declare UTF-16; Git stores the
-          # source text as UTF-8, so normalize to UTF-16LE with BOM for the
-          # Windows compiler before building.
+          # EasyFace-generated projects declare UTF-16. Normalize the checked-in
+          # XML to UTF-16LE + BOM before handing it to the Windows compiler.
           $fprj = Join-Path $root 'BandDripProV1.fprj'
           $xml = Get-Content -Raw -Path $fprj
           [System.IO.File]::WriteAllText($fprj, $xml, [System.Text.Encoding]::Unicode)
 
+          # DeviceType 367 uses a 336x480 runtime canvas but EasyFace expects a
+          # 230x328 gallery preview. The previous CI attempt confirmed this exact
+          # compiler requirement.
           Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap 336,480
+          $bmp = New-Object System.Drawing.Bitmap 230,328
           $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
           $g.Clear([System.Drawing.Color]::Black)
           $white = [System.Drawing.Brushes]::White
           $gray = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(142,142,147))
           $blue = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(100,210,255))
-          $big = New-Object System.Drawing.Font('Arial',62,[System.Drawing.FontStyle]::Bold)
-          $mid = New-Object System.Drawing.Font('Arial',24,[System.Drawing.FontStyle]::Regular)
-          $small = New-Object System.Drawing.Font('Arial',15,[System.Drawing.FontStyle]::Regular)
+          $big = New-Object System.Drawing.Font('Arial',42,[System.Drawing.FontStyle]::Bold)
+          $mid = New-Object System.Drawing.Font('Arial',16,[System.Drawing.FontStyle]::Regular)
+          $small = New-Object System.Drawing.Font('Arial',10,[System.Drawing.FontStyle]::Regular)
           $center = New-Object System.Drawing.StringFormat
           $center.Alignment = [System.Drawing.StringAlignment]::Center
 
-          $g.DrawString('BANDDRIP - DEMO',$small,$gray,(New-Object System.Drawing.RectangleF 0,30,336,40),$center)
-          $g.DrawString('112',$big,$white,(New-Object System.Drawing.RectangleF 0,90,255,100),$center)
-          $g.DrawString('v',$mid,$white,(New-Object System.Drawing.RectangleF 235,120,70,60),$center)
-          $g.DrawString('+6',$mid,$blue,(New-Object System.Drawing.RectangleF 35,220,90,50),$center)
-          $g.DrawString('3m ago',$mid,$gray,(New-Object System.Drawing.RectangleF 155,220,150,50),$center)
-          $g.DrawString('IOB 0.250 U',$mid,$gray,(New-Object System.Drawing.RectangleF 0,286,336,50),$center)
-          $g.DrawString('22:14',$mid,$white,(New-Object System.Drawing.RectangleF 0,370,336,50),$center)
+          $g.DrawString('BANDDRIP - DEMO',$small,$gray,(New-Object System.Drawing.RectangleF 0,20,230,28),$center)
+          $g.DrawString('112',$big,$white,(New-Object System.Drawing.RectangleF 0,62,175,70),$center)
+          $g.DrawString('v',$mid,$white,(New-Object System.Drawing.RectangleF 160,82,45,38),$center)
+          $g.DrawString('+6',$mid,$blue,(New-Object System.Drawing.RectangleF 22,150,62,34),$center)
+          $g.DrawString('3m ago',$mid,$gray,(New-Object System.Drawing.RectangleF 108,150,102,34),$center)
+          $g.DrawString('IOB 0.250 U',$mid,$gray,(New-Object System.Drawing.RectangleF 0,196,230,34),$center)
+          $g.DrawString('22:14',$mid,$white,(New-Object System.Drawing.RectangleF 0,254,230,34),$center)
 
           $preview = Join-Path $images 'preview_rgba.png'
           $bmp.Save($preview,[System.Drawing.Imaging.ImageFormat]::Png)
@@ -65,6 +69,7 @@ jobs:
 
           Write-Host "Prepared $fprj"
           Write-Host "Prepared $preview"
+          Write-Host "Preview size: 230x328"
 
       - name: Download community watchface compiler
         shell: powershell
