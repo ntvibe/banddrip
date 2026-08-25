@@ -23,29 +23,36 @@ jobs:
       - name: Checkout BandDrip
         uses: actions/checkout@v5
 
-      - name: Fetch public Lua watchface compiler template
+      - name: Download EasyFace Gen2 Compiler v4.23
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/FangAiden/LuaDevTemplate.git "$env:RUNNER_TEMP\LuaDevTemplate"
+          $zip = "$env:RUNNER_TEMP\EasyFace_Gen2_CompilerV423.zip"
+          $dir = "$env:RUNNER_TEMP\EasyFace423"
+          Invoke-WebRequest -Uri 'https://github.com/m0tral/EasyFace/releases/download/v4.23/EasyFace_Gen2_CompilerV423.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $compiler = Get-ChildItem $dir -Recurse -Filter 'Compiler.exe' | Select-Object -First 1
+          if (!$compiler) { throw 'EasyFace v4.23 Compiler.exe not found in release archive' }
+          "COMPILER_PATH=$($compiler.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Get-FileHash $zip -Algorithm SHA256 | Format-List
+          Write-Host "Compiler: $($compiler.FullName)"
 
       - name: Stage BandDrip Pro NFC project
         shell: pwsh
         run: |
-          $template = "$env:RUNNER_TEMP\LuaDevTemplate"
-          $fprjDir = Join-Path $template 'watchface\fprj'
-          Remove-Item -Recurse -Force (Join-Path $fprjDir 'app') -ErrorAction SilentlyContinue
-          Copy-Item -Recurse 'experiments\pro-nfc-face-v1\app' (Join-Path $fprjDir 'app')
+          $stage = Join-Path $env:RUNNER_TEMP 'BandDripProNfc'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $stage 'images') | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $stage 'output') | Out-Null
+          Copy-Item -Recurse 'experiments\pro-nfc-face-v1\app' (Join-Path $stage 'app')
           $src = Get-Content 'experiments\pro-nfc-face-v1\BandDripProNfc.fprj' -Raw
-          Set-Content -Path (Join-Path $fprjDir 'BandDripProNfc.fprj') -Value $src -Encoding Unicode
-          New-Item -ItemType Directory -Force (Join-Path $fprjDir 'images') | Out-Null
-          New-Item -ItemType Directory -Force (Join-Path $fprjDir 'output') | Out-Null
+          Set-Content -Path (Join-Path $stage 'BandDripProNfc.fprj') -Value $src -Encoding Unicode
+          "PROJECT_DIR=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Generate 336x480 preview resource
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Drawing
-          $template = "$env:RUNNER_TEMP\LuaDevTemplate"
-          $path = Join-Path $template 'watchface\fprj\images\preview_rgba.png'
+          $path = Join-Path $env:PROJECT_DIR 'images\preview_rgba.png'
           $bmp = [System.Drawing.Bitmap]::new(336, 480)
           $g = [System.Drawing.Graphics]::FromImage($bmp)
           $g.Clear([System.Drawing.Color]::Black)
@@ -57,13 +64,16 @@ jobs:
       - name: Compile .face for DeviceType 567
         shell: pwsh
         run: |
-          $template = "$env:RUNNER_TEMP\LuaDevTemplate"
-          $compiler = Join-Path $template 'watchface\tools\Compiler.exe'
-          $project = Join-Path $template 'watchface\fprj\BandDripProNfc.fprj'
+          $project = Join-Path $env:PROJECT_DIR 'BandDripProNfc.fprj'
           $out = Join-Path $PWD 'dist'
           New-Item -ItemType Directory -Force $out | Out-Null
-          & $compiler -b $project $out 'BandDrip-Pro-NFC-Probe-v1.face' '26082501'
-          if ($LASTEXITCODE) { throw "Compiler.exe failed with exit code $LASTEXITCODE" }
+          Push-Location (Split-Path $env:COMPILER_PATH)
+          try {
+            & $env:COMPILER_PATH -b $project $out 'BandDrip-Pro-NFC-Probe-v1.face' '26082501'
+            if ($LASTEXITCODE) { throw "Compiler.exe failed with exit code $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
           $face = Join-Path $out 'BandDrip-Pro-NFC-Probe-v1.face'
           if (!(Test-Path $face)) { throw 'Compiler completed but .face output is missing' }
           Get-FileHash $face -Algorithm SHA256 | Format-List
