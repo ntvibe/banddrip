@@ -40,7 +40,7 @@ object MiFitnessAuthKeyReader {
         val script = buildString {
             append("for f in ")
             append(logPaths.joinToString(" ") { "'$it'" })
-            append("; do if [ -f \"$f\" ]; then echo '__BANDDRIP_LOG__'\"$f\"; tail -c 8388608 \"$f\"; fi; done")
+            append("; do if [ -f \"\$f\" ]; then echo '__BANDDRIP_LOG__'\"\$f\"; tail -c 8388608 \"\$f\"; fi; done")
         }
 
         val shell = runCatching { ShizukuShell.run("sh", "-c", script) }
