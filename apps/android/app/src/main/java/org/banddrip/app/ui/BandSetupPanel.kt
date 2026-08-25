@@ -22,8 +22,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.banddrip.app.config.AppSettingsStore
 import org.banddrip.app.install.BandBundleManager
 import org.banddrip.app.install.MiFitnessAssistedInstaller
+import org.banddrip.app.install.MiFitnessAuthKeyReader
 import org.banddrip.app.install.ShizukuShell
 
 @Composable
@@ -44,11 +46,12 @@ fun BandSetupPanel() {
 
     val bundle = remember(tick) { BandBundleManager.status(context) }
     val shizuku = remember(tick) { ShizukuShell.status(context) }
+    val authKeySaved = remember(tick) { AppSettingsStore(context).hasBandAuthKey() }
 
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text("Band setup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            "The Android APK carries its matching Vela RPK. BandDrip chooses the least-friction installer path available on this phone.",
+            "BandDrip can read the paired band's Mi Fitness AuthKey locally. No BandBBS/forum account and no Xiaomi password are required. The key stays encrypted on this phone.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -58,6 +61,56 @@ fun BandSetupPanel() {
         SetupRow("Mi Fitness installed", bundle.miFitnessInstalled)
         SetupRow("Shizuku running", shizuku.binderAlive)
         SetupRow("BandDrip Shizuku permission", shizuku.permissionGranted)
+        SetupRow("Mi Fitness AuthKey saved", authKeySaved)
+
+        Button(
+            enabled = !busy && bundle.miFitnessInstalled && shizuku.permissionGranted,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+                busy = true
+                installStatus = "Reading Mi Fitness logs locally…"
+                scope.launch {
+                    val outcome = MiFitnessAuthKeyReader.readAndStore(context)
+                    installStatus = outcome.message
+                    busy = false
+                    tick += 1
+                }
+            },
+        ) {
+            Text(if (busy) "Working…" else "Read AuthKey locally")
+        }
+
+        Text(
+            "BandDrip searches Mi Fitness log fields encryptKey / token / authKey / huamiAuthKey for the latest 32-character hexadecimal key. It never uploads or displays the full key.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (!shizuku.installed) {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    installStatus = ShizukuShell.openDownloadPage(context)
+                        .fold({ "Opened Shizuku download page" }, { "Could not open Shizuku page: ${safeMessage(it)}" })
+                },
+            ) { Text("Get Shizuku") }
+        } else if (!shizuku.binderAlive) {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    installStatus = ShizukuShell.openManager(context)
+                        .fold({ "Open Shizuku and start it with Wireless debugging" }, { "Could not open Shizuku: ${safeMessage(it)}" })
+                },
+            ) { Text("Open / start Shizuku") }
+        } else if (!shizuku.permissionGranted) {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    installStatus = ShizukuShell.requestPermission()
+                        .fold({ "Shizuku permission request opened" }, { "Permission request failed: ${safeMessage(it)}" })
+                },
+            ) { Text("Grant BandDrip Shizuku permission") }
+        }
 
         Button(
             enabled = !busy && bundle.rpkBundled && bundle.miFitnessInstalled,
@@ -90,33 +143,7 @@ fun BandSetupPanel() {
                 }
             },
         ) {
-            Text(if (busy) "Installing…" else "Install BandDrip on band")
-        }
-
-        if (!shizuku.installed) {
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    installStatus = ShizukuShell.openDownloadPage(context)
-                        .fold({ "Opened Shizuku download page" }, { "Could not open Shizuku page: ${safeMessage(it)}" })
-                },
-            ) { Text("Get Shizuku for one-button install") }
-        } else if (!shizuku.binderAlive) {
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    installStatus = ShizukuShell.openManager(context)
-                        .fold({ "Open Shizuku and start it with Wireless debugging" }, { "Could not open Shizuku: ${safeMessage(it)}" })
-                },
-            ) { Text("Open / start Shizuku") }
-        } else if (!shizuku.permissionGranted) {
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    installStatus = ShizukuShell.requestPermission()
-                        .fold({ "Shizuku permission request opened" }, { "Permission request failed: ${safeMessage(it)}" })
-                },
-            ) { Text("Grant BandDrip Shizuku permission") }
+            Text(if (busy) "Working…" else "Install BandDrip on band (regular Band path)")
         }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -148,7 +175,7 @@ fun BandSetupPanel() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            "Watch-face glance mode is being developed as a separate Band 10 home-surface package. It will be bundled here too once the live-data bridge is proven; the app will not claim it works before hardware/runtime validation.",
+            "Smart Band 10 Pro / Pro NFC is being treated as a watch-face-first target. Do not use the regular Band RPK install button for the Pro NFC while its third-party-app path remains unverified.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
