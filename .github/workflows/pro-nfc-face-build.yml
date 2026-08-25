@@ -1,0 +1,83 @@
+name: Pro NFC Face Probe
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/pro-nfc-face-v1/**'
+      - '.github/workflows/pro-nfc-face-build.yml'
+  push:
+    branches:
+      - hardware/pro-nfc-v1
+    paths:
+      - 'experiments/pro-nfc-face-v1/**'
+      - '.github/workflows/pro-nfc-face-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-face:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout BandDrip
+        uses: actions/checkout@v5
+
+      - name: Fetch public Lua watchface compiler template
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/FangAiden/LuaDevTemplate.git "$env:RUNNER_TEMP\LuaDevTemplate"
+
+      - name: Stage BandDrip Pro NFC project
+        shell: pwsh
+        run: |
+          $template = "$env:RUNNER_TEMP\LuaDevTemplate"
+          $fprjDir = Join-Path $template 'watchface\fprj'
+          Remove-Item -Recurse -Force (Join-Path $fprjDir 'app') -ErrorAction SilentlyContinue
+          Copy-Item -Recurse 'experiments\pro-nfc-face-v1\app' (Join-Path $fprjDir 'app')
+          $src = Get-Content 'experiments\pro-nfc-face-v1\BandDripProNfc.fprj' -Raw
+          Set-Content -Path (Join-Path $fprjDir 'BandDripProNfc.fprj') -Value $src -Encoding Unicode
+
+      - name: Generate 336x480 preview resource
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $template = "$env:RUNNER_TEMP\LuaDevTemplate"
+          $path = Join-Path $template 'watchface\fprj\preview_rgba.png'
+          $bmp = New-Object System.Drawing.Bitmap 336,480
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::Black)
+          $white = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+          $blue = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(100,210,255))
+          $gray = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(142,142,147))
+          $f1 = New-Object System.Drawing.Font 'Arial',72,[System.Drawing.FontStyle]::Bold
+          $f2 = New-Object System.Drawing.Font 'Arial',26,[System.Drawing.FontStyle]::Regular
+          $f3 = New-Object System.Drawing.Font 'Arial',22,[System.Drawing.FontStyle]::Regular
+          $g.DrawString('112', $f1, $white, 70, 105)
+          $g.DrawString('+6  ·  3m ago', $f2, $blue, 66, 220)
+          $g.DrawString('IOB 0.250 U', $f3, $gray, 92, 286)
+          $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+          $f1.Dispose(); $f2.Dispose(); $f3.Dispose()
+          $white.Dispose(); $blue.Dispose(); $gray.Dispose(); $g.Dispose(); $bmp.Dispose()
+
+      - name: Compile .face for DeviceType 567
+        shell: pwsh
+        run: |
+          $template = "$env:RUNNER_TEMP\LuaDevTemplate"
+          $compiler = Join-Path $template 'watchface\tools\Compiler.exe'
+          $project = Join-Path $template 'watchface\fprj\BandDripProNfc.fprj'
+          $out = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          & $compiler -b $project $out 'BandDrip-Pro-NFC-Probe-v1.face' '26082501'
+          if ($LASTEXITCODE) { throw "Compiler.exe failed with exit code $LASTEXITCODE" }
+          $face = Join-Path $out 'BandDrip-Pro-NFC-Probe-v1.face'
+          if (!(Test-Path $face)) { throw 'Compiler completed but .face output is missing' }
+          Get-FileHash $face -Algorithm SHA256 | Format-List
+          Get-Item $face | Format-List Name,Length,LastWriteTime
+
+      - name: Upload installable face
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandDrip-Pro-NFC-Probe-v1
+          path: dist/BandDrip-Pro-NFC-Probe-v1.face
+          if-no-files-found: error
