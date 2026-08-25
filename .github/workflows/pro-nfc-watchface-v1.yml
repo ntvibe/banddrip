@@ -1,6 +1,10 @@
 name: Build Pro NFC watchface v1
 
 on:
+  pull_request:
+    paths:
+      - 'experiments/pro-nfc-watchface-v1/**'
+      - '.github/workflows/pro-nfc-watchface-v1.yml'
   push:
     branches:
       - scaffold/public-mvp
