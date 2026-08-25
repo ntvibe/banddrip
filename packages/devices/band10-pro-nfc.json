@@ -1,0 +1,24 @@
+{
+  "id": "band10-pro-nfc",
+  "name": "Xiaomi Smart Band 10 Pro NFC",
+  "family": "smart-band-pro",
+  "width": 336,
+  "height": 480,
+  "shape": "rounded-rectangle",
+  "cornerRadius": 56,
+  "geometryConfidence": "verified",
+  "banddripTarget": "experimental-watchface",
+  "capabilities": {
+    "velaQuickApp": false,
+    "systemInterconnect": false,
+    "luaWatchFaceResearch": true,
+    "officialThirdPartyAppPath": "not-supported",
+    "watchFaceChannel": true,
+    "nfc": true
+  },
+  "safety": {
+    "doNotModifyNfcPaymentStack": true,
+    "doNotCrossFlashFirmwareForBaseline": true
+  },
+  "notes": "Primary physical test target for BandDrip Pro NFC work. Use the 336x480 watch-face path; do not treat the regular Band 10 RPK installer as applicable to Global Pro NFC firmware."
+}

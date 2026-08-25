@@ -1,0 +1,110 @@
+name: Build Pro NFC watchface v1
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/pro-nfc-watchface-v1/**'
+      - '.github/workflows/pro-nfc-watchface-v1.yml'
+  push:
+    branches:
+      - scaffold/public-mvp
+    paths:
+      - 'experiments/pro-nfc-watchface-v1/**'
+      - '.github/workflows/pro-nfc-watchface-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Prepare EasyFace-compatible project
+        shell: powershell
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'experiments\pro-nfc-watchface-v1'
+          $images = Join-Path $root 'images'
+          $bin = Join-Path $root 'bin'
+          $scratch = Join-Path $root 'output'
+          New-Item -ItemType Directory -Force -Path $images, $bin, $scratch | Out-Null
+
+          # EasyFace-generated projects declare UTF-16. Normalize the checked-in
+          # XML to UTF-16LE + BOM before handing it to the Windows compiler.
+          $fprj = Join-Path $root 'BandDripProV1.fprj'
+          $xml = Get-Content -Raw -Path $fprj
+          [System.IO.File]::WriteAllText($fprj, $xml, [System.Text.Encoding]::Unicode)
+
+          # DeviceType 367 uses a 336x480 runtime canvas but EasyFace expects a
+          # 230x328 gallery preview. The previous CI attempt confirmed this exact
+          # compiler requirement.
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 230,328
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+          $g.Clear([System.Drawing.Color]::Black)
+          $white = [System.Drawing.Brushes]::White
+          $gray = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(142,142,147))
+          $blue = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(100,210,255))
+          $big = New-Object System.Drawing.Font('Arial',42,[System.Drawing.FontStyle]::Bold)
+          $mid = New-Object System.Drawing.Font('Arial',16,[System.Drawing.FontStyle]::Regular)
+          $small = New-Object System.Drawing.Font('Arial',10,[System.Drawing.FontStyle]::Regular)
+          $center = New-Object System.Drawing.StringFormat
+          $center.Alignment = [System.Drawing.StringAlignment]::Center
+
+          $g.DrawString('BANDDRIP - DEMO',$small,$gray,(New-Object System.Drawing.RectangleF 0,20,230,28),$center)
+          $g.DrawString('112',$big,$white,(New-Object System.Drawing.RectangleF 0,62,175,70),$center)
+          $g.DrawString('v',$mid,$white,(New-Object System.Drawing.RectangleF 160,82,45,38),$center)
+          $g.DrawString('+6',$mid,$blue,(New-Object System.Drawing.RectangleF 22,150,62,34),$center)
+          $g.DrawString('3m ago',$mid,$gray,(New-Object System.Drawing.RectangleF 108,150,102,34),$center)
+          $g.DrawString('IOB 0.250 U',$mid,$gray,(New-Object System.Drawing.RectangleF 0,196,230,34),$center)
+          $g.DrawString('22:14',$mid,$white,(New-Object System.Drawing.RectangleF 0,254,230,34),$center)
+
+          $preview = Join-Path $images 'preview_rgba.png'
+          $bmp.Save($preview,[System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose(); $gray.Dispose(); $blue.Dispose(); $big.Dispose(); $mid.Dispose(); $small.Dispose(); $center.Dispose()
+
+          Write-Host "Prepared $fprj"
+          Write-Host "Prepared $preview"
+          Write-Host "Preview size: 230x328"
+
+      - name: Download community watchface compiler
+        shell: powershell
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'banddrip-watchface-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $compiler = Join-Path $tools 'Compiler.exe'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/FangAiden/LuaDevTemplate/main/watchface/tools/Compiler.exe' -OutFile $compiler
+          if (-not (Test-Path $compiler)) { throw 'Compiler download failed' }
+          Write-Host "Compiler SHA256: $((Get-FileHash $compiler -Algorithm SHA256).Hash)"
+
+      - name: Compile BandDripProV1.face
+        shell: powershell
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'experiments\pro-nfc-watchface-v1'
+          $fprj = Join-Path $root 'BandDripProV1.fprj'
+          $out = Join-Path $root 'bin'
+          $compiler = Join-Path $env:RUNNER_TEMP 'banddrip-watchface-tools\Compiler.exe'
+          $faceName = 'BandDripProV1.face'
+          $faceId = '1908261001'
+
+          & $compiler -b $fprj $out $faceName $faceId
+          if ($LASTEXITCODE -ne 0) { throw "Compiler exited with $LASTEXITCODE" }
+
+          $face = Join-Path $out $faceName
+          if (-not (Test-Path $face)) { throw "Expected face not produced: $face" }
+          if ((Get-Item $face).Length -lt 1024) { throw 'Compiled face is unexpectedly small' }
+          Write-Host "FACE=$face"
+          Write-Host "SIZE=$((Get-Item $face).Length)"
+          Write-Host "SHA256=$((Get-FileHash $face -Algorithm SHA256).Hash)"
+
+      - name: Upload installable watchface
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandDripProV1-face
+          path: experiments/pro-nfc-watchface-v1/bin/BandDripProV1.face
+          if-no-files-found: error
+          retention-days: 30

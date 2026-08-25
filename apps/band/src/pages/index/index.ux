@@ -1,0 +1,263 @@
+<template>
+  <div class="page">
+    <div class="content">
+      <text if="{{devMockMode}}" class="demo-badge">DEMO</text>
+
+      <div class="glucose-row">
+        <text class="{{stale ? 'glucose glucose-stale' : 'glucose'}}">{{glucoseText}}</text>
+        <text class="{{stale ? 'trend trend-stale' : 'trend'}}">{{trendText}}</text>
+      </div>
+
+      <div class="meta-row">
+        <text class="meta">{{deltaText}}</text>
+        <text class="separator">·</text>
+        <text class="meta age">{{ageText}}</text>
+      </div>
+
+      <text if="{{showIob}}" class="iob">{{iobText}}</text>
+    </div>
+  </div>
+</template>
+
+<style>
+  .page {
+    width: 212px;
+    height: 520px;
+    background-color: #000000;
+  }
+
+  .content {
+    width: 212px;
+    height: 520px;
+    padding-top: 92px;
+    align-items: center;
+  }
+
+  .demo-badge {
+    position: absolute;
+    top: 32px;
+    font-size: 15px;
+    color: #6e6e73;
+  }
+
+  .glucose-row {
+    width: 196px;
+    height: 116px;
+    justify-content: center;
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .glucose {
+    font-size: 76px;
+    font-weight: 700;
+    color: #ffffff;
+  }
+
+  .trend {
+    margin-left: 8px;
+    font-size: 46px;
+    font-weight: 600;
+    color: #ffffff;
+  }
+
+  .glucose-stale {
+    color: #ff3b30;
+    text-decoration: line-through;
+  }
+
+  .trend-stale {
+    color: #ff3b30;
+  }
+
+  .meta-row {
+    margin-top: 18px;
+    width: 196px;
+    height: 48px;
+    justify-content: center;
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .meta {
+    font-size: 31px;
+    font-weight: 500;
+    color: #64d2ff;
+  }
+
+  .separator {
+    margin-left: 9px;
+    margin-right: 9px;
+    font-size: 29px;
+    color: #6e6e73;
+  }
+
+  .age {
+    color: #8e8e93;
+  }
+
+  .iob {
+    margin-top: 28px;
+    font-size: 25px;
+    font-weight: 500;
+    color: #d1d1d6;
+  }
+</style>
+
+<script>
+  import interconnect from '@system.interconnect'
+  import {
+    ageMinutes,
+    formatAge,
+    formatDelta,
+    formatGlucose,
+    formatIob,
+    isStale,
+    trendArrow
+  } from '../../common/reading.js'
+  import {
+    DEV_MOCK_FIXED_LABEL,
+    DEV_MOCK_MODE,
+    DEV_MOCK_SEQUENCE,
+    createMockReading,
+    mockIndexForLabel
+  } from '../../common/dev-mock.js'
+  import { persistGlanceSettings, persistGlanceState } from '../../common/glance-store.js'
+  import { isSupportedPacket } from '../../common/protocol.js'
+  import { validateReading } from '../../common/validation.js'
+
+  export default {
+    private: {
+      hasReading: false,
+      glucoseText: '—',
+      trendText: '',
+      deltaText: 'Δ —',
+      ageText: 'age —',
+      iobText: 'IOB —',
+      showIob: true,
+      stale: true,
+      reading: null,
+      refreshTimer: null,
+      mockTimer: null,
+      mockIndex: 0,
+      connection: null,
+      devMockMode: DEV_MOCK_MODE
+    },
+
+    onInit() {
+      if (DEV_MOCK_MODE) {
+        this.startMockSequence()
+        this.refreshTimer = setInterval(() => this.refreshDisplay(), 30000)
+        return
+      }
+
+      this.connection = interconnect.instance()
+      this.connection.onmessage = (event) => this.handleMessage(event)
+      this.connection.onopen = () => this.refreshDisplay()
+      this.connection.onclose = () => this.refreshDisplay()
+      this.connection.onerror = (error) => {
+        console.error('BandDrip interconnect error', error)
+        this.refreshDisplay()
+      }
+
+      this.refreshTimer = setInterval(() => this.refreshDisplay(), 30000)
+      this.refreshDisplay()
+    },
+
+    onShow() {
+      this.refreshDisplay()
+    },
+
+    onDestroy() {
+      if (this.refreshTimer) clearInterval(this.refreshTimer)
+      if (this.mockTimer) clearInterval(this.mockTimer)
+      this.refreshTimer = null
+      this.mockTimer = null
+    },
+
+    startMockSequence() {
+      this.mockIndex = mockIndexForLabel(DEV_MOCK_FIXED_LABEL)
+      this.applyMockStep()
+      if (DEV_MOCK_FIXED_LABEL) return
+
+      this.mockTimer = setInterval(() => {
+        this.mockIndex = (this.mockIndex + 1) % DEV_MOCK_SEQUENCE.length
+        this.applyMockStep()
+      }, 5000)
+    },
+
+    applyMockStep() {
+      const step = DEV_MOCK_SEQUENCE[this.mockIndex]
+      this.reading = createMockReading(step)
+      this.hasReading = true
+      // Emulator fixtures intentionally avoid persistent-file I/O so firmware
+      // rendering tests isolate the exact production layout from transport/storage.
+      this.refreshDisplay()
+      console.info(`BandDrip DEMO state: ${step.label}`)
+    },
+
+    handleMessage(event) {
+      try {
+        let payload = event && event.data !== undefined ? event.data : event
+        if (typeof payload === 'string') payload = JSON.parse(payload)
+
+        if (!payload || !payload.type) return
+        if (!isSupportedPacket(payload)) {
+          console.error('BandDrip unsupported protocol packet')
+          return
+        }
+
+        if (payload.type === 'settings') {
+          if (typeof payload.showIob === 'boolean') this.showIob = payload.showIob
+          persistGlanceSettings(this.reading, this.showIob)
+          return
+        }
+
+        if (payload.type !== 'reading') return
+        if (!validateReading(payload)) {
+          console.error('BandDrip rejected invalid reading packet')
+          this.clearReading()
+          return
+        }
+
+        this.reading = payload
+        this.hasReading = true
+        persistGlanceState(this.reading, this.showIob)
+        this.refreshDisplay()
+      } catch (error) {
+        console.error('BandDrip invalid message', error)
+        this.clearReading()
+      }
+    },
+
+    clearReading() {
+      this.reading = null
+      this.hasReading = false
+      this.refreshDisplay()
+    },
+
+    refreshDisplay() {
+      if (!this.reading) {
+        this.glucoseText = '—'
+        this.trendText = ''
+        this.deltaText = 'Δ —'
+        this.ageText = 'age —'
+        this.iobText = 'IOB —'
+        this.stale = true
+        return
+      }
+
+      const reading = this.reading
+      this.glucoseText = formatGlucose(reading.glucose, reading.units)
+      this.trendText = trendArrow(reading.trend)
+      this.deltaText = formatDelta(reading.delta, reading.units)
+      this.ageText = formatAge(reading.glucoseTimestampMs)
+      this.stale = isStale(reading.glucoseTimestampMs)
+
+      const iobAge = ageMinutes(reading.iobTimestampMs)
+      this.iobText = iobAge !== null && iobAge < 10
+        ? formatIob(reading.iobUnits)
+        : 'IOB —'
+    }
+  }
+</script>

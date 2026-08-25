@@ -1,0 +1,19 @@
+{
+  "name": "banddrip-vela",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BandDrip Xiaomi Vela wearable app",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "aiot start --watch",
+    "test": "node tools/assert-display-spec.mjs && node --experimental-default-type=module --test tests/*.test.js",
+    "build": "aiot build",
+    "release": "node tools/assert-mock-off.mjs && node tools/assert-display-spec.mjs && aiot release"
+  },
+  "devDependencies": {
+    "@aiot-toolkit/jsc": "^1.0.3",
+    "aiot-toolkit": "^2.0.5"
+  }
+}

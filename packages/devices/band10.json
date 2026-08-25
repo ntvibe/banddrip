@@ -1,0 +1,18 @@
+{
+  "id": "band10",
+  "name": "Xiaomi Smart Band 10",
+  "family": "smart-band",
+  "width": 212,
+  "height": 520,
+  "shape": "capsule",
+  "cornerRadius": 106,
+  "geometryConfidence": "verified",
+  "banddripTarget": "primary",
+  "capabilities": {
+    "velaQuickApp": true,
+    "systemInterconnect": true,
+    "luaWatchFaceResearch": true,
+    "officialThirdPartyAppPath": "supported-research"
+  },
+  "notes": "Primary BandDrip hardware target. RPK + Android companion architecture is developed against this geometry; physical Global Band 10 validation remains pending."
+}

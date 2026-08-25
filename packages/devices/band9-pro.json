@@ -1,0 +1,18 @@
+{
+  "id": "band9-pro",
+  "name": "Xiaomi Smart Band 9 Pro",
+  "family": "smart-band-pro",
+  "width": 336,
+  "height": 480,
+  "shape": "rounded-rectangle",
+  "cornerRadius": 56,
+  "geometryConfidence": "vela-emulator-skin",
+  "banddripTarget": "emulator-research",
+  "capabilities": {
+    "velaQuickApp": "research",
+    "systemInterconnect": "research",
+    "luaWatchFaceResearch": true,
+    "officialThirdPartyAppPath": "unknown"
+  },
+  "notes": "The Xiaomi Vela emulator currently exposes the xiaomi_band_pro 336x480 skin used for Band 8 Pro / Band 9 Pro research."
+}

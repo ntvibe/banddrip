@@ -1,0 +1,149 @@
+name: Real firmware BandDrip Lab
+
+# Heavy research workflow: downloads and boots the full Xiaomi Vela/QEMU image.
+# Keep this manual-only so normal BandDrip development stays lightweight.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: banddrip-real-firmware-pages
+  cancel-in-progress: true
+
+jobs:
+  render-real-firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BANDDRIP_VVD_NAME: BandDrip_RealFirmwareLab
+      BANDDRIP_VELA_SKIN: xiaomi_band_pro
+      BANDDRIP_VELA_IMAGE: vela-miwear-watch-5.0
+      EMU_SERIAL: emulator-5554
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Enable KVM when exposed by runner
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb adb lsof python3-pil libpulse0 libgl1 libnss3 libxkbcommon0 \
+            libxcomposite1 libxcursor1 libxi6 libxtst6 libxrandr2 \
+            libasound2t64 libdbus-1-3 libfontconfig1
+
+      - name: Install Xiaomi Vela and gRPC tooling
+        run: |
+          npm install --no-save \
+            aiot-toolkit@2.0.5 @aiot-toolkit/emulator \
+            @grpc/grpc-js @grpc/proto-loader google-proto-files
+
+      - name: Download Xiaomi Vela emulator image
+        run: npx aiot initEmulatorEnv
+
+      - name: Create Xiaomi virtual band
+        run: node tools/vela-emulator/create-vvd.cjs
+
+      - name: Prepare BandDrip build dependencies and exact render baseline
+        run: |
+          (cd apps/band && npm install && npm test)
+          rm -rf /tmp/banddrip-render-base
+          mkdir -p /tmp/banddrip-render-base
+          cp apps/band/src/pages/index/index.ux /tmp/banddrip-render-base/index.ux
+          cp apps/band/src/manifest.json /tmp/banddrip-render-base/manifest.json
+          cp apps/band/src/app.ux /tmp/banddrip-render-base/app.ux
+
+      - name: Start real Vela firmware under QEMU
+        run: |
+          adb start-server
+          nohup xvfb-run -a node tools/vela-emulator/start-vvd.cjs > vela-emulator.log 2>&1 &
+          echo $! > vela-emulator.pid
+
+      - name: Wait for real firmware ADB
+        run: |
+          for i in $(seq 1 150); do
+            if adb devices | grep -q "${EMU_SERIAL}.*device"; then
+              adb devices
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'Xiaomi Vela emulator did not expose ADB in time.' >&2
+          exit 1
+
+      - name: Calibrate renderer with known-working Songbird Quick App
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/xiaomi-band-development
+          git clone --depth 1 --branch develop https://github.com/oryonatan/xiaomi-band-development.git /tmp/xiaomi-band-development
+          (cd /tmp/xiaomi-band-development/examples/songbird && npm install && npm run build)
+          bash tools/vela-emulator/deploy-rpk.sh /tmp/xiaomi-band-development/examples/songbird
+          sleep 1
+          mkdir -p firmware-shots
+          node tools/vela-emulator/capture-grpc.cjs firmware-shots/calibration-songbird.png
+          python3 tools/vela-emulator/assert-visible-png.py firmware-shots/calibration-songbird.png
+
+      - name: Render and verify real-firmware BandDrip fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p firmware-shots
+          for fixture in fresh-default stale-glucose large-three-digit mmol-format stale-iob missing-delta; do
+            echo "=== Rendering $fixture in real Xiaomi Vela firmware ==="
+            node tools/vela-emulator/prepare-render-fixture.mjs "$fixture" apps/band /tmp/banddrip-render-base
+            (cd apps/band && npm run build)
+            bash tools/vela-emulator/deploy-rpk.sh apps/band
+            sleep 1
+            node tools/vela-emulator/capture-grpc.cjs "firmware-shots/${fixture}.png"
+            python3 tools/vela-emulator/assert-visible-png.py "firmware-shots/${fixture}.png"
+          done
+          cp /tmp/banddrip-render-base/index.ux apps/band/src/pages/index/index.ux
+          cp /tmp/banddrip-render-base/manifest.json apps/band/src/manifest.json
+          cp /tmp/banddrip-render-base/app.ux apps/band/src/app.ux
+
+      - name: Build real-firmware result manifest
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+          const fixtures = [
+            ['fresh-default', 'Fresh', '112 mg/dL · ↘ · +6 · 3m ago · IOB 0.250 U'],
+            ['stale-glucose', 'Stale 12m', '112 mg/dL · ↘ · +6 · 12m ago · stale'],
+            ['large-three-digit', 'High 350', '350 mg/dL · ↑ · +22 · 1m ago'],
+            ['mmol-format', 'mmol/L', '6.2 mmol/L · → · +0.3 · 2m ago'],
+            ['stale-iob', 'Stale IOB', '98 mg/dL · → · -2 · 2m ago · stale IOB'],
+            ['missing-delta', 'No delta', '104 mg/dL · → · Δ — · 1m ago']
+          ].map(([id,label,summary]) => ({ id, label, summary, image: `real/${id}.png` }))
+          fs.mkdirSync('real-results', { recursive: true })
+          fs.writeFileSync('real-results/latest.json', JSON.stringify({
+            status: 'passed',
+            evidence: 'real-xiaomi-vela-qemu-exact-template-style',
+            runtimeData: 'fixed emulator fixture; phone transport/storage bypassed',
+            device: 'xiaomi_band_pro',
+            width: 336,
+            height: 480,
+            image: 'vela-miwear-watch-5.0',
+            commit: process.env.GITHUB_SHA,
+            generatedAt: new Date().toISOString(),
+            fixtures
+          }, null, 2))
+          NODE
+
+      - name: Upload evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: banddrip-real-firmware-preview
+          path: |
+            firmware-shots
+            real-results/latest.json
+            vela-emulator.log
+          if-no-files-found: warn
