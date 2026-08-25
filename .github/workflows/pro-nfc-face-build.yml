@@ -44,21 +44,13 @@ jobs:
           Add-Type -AssemblyName System.Drawing
           $template = "$env:RUNNER_TEMP\LuaDevTemplate"
           $path = Join-Path $template 'watchface\fprj\preview_rgba.png'
-          $bmp = New-Object System.Drawing.Bitmap 336,480
+          $bmp = [System.Drawing.Bitmap]::new(336, 480)
           $g = [System.Drawing.Graphics]::FromImage($bmp)
           $g.Clear([System.Drawing.Color]::Black)
-          $white = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
-          $blue = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(100,210,255))
-          $gray = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(142,142,147))
-          $f1 = New-Object System.Drawing.Font 'Arial',72,[System.Drawing.FontStyle]::Bold
-          $f2 = New-Object System.Drawing.Font 'Arial',26,[System.Drawing.FontStyle]::Regular
-          $f3 = New-Object System.Drawing.Font 'Arial',22,[System.Drawing.FontStyle]::Regular
-          $g.DrawString('112', $f1, $white, 70, 105)
-          $g.DrawString('+6  ·  3m ago', $f2, $blue, 66, 220)
-          $g.DrawString('IOB 0.250 U', $f3, $gray, 92, 286)
           $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-          $f1.Dispose(); $f2.Dispose(); $f3.Dispose()
-          $white.Dispose(); $blue.Dispose(); $gray.Dispose(); $g.Dispose(); $bmp.Dispose()
+          $g.Dispose()
+          $bmp.Dispose()
+          if (!(Test-Path $path)) { throw 'preview_rgba.png was not generated' }
 
       - name: Compile .face for DeviceType 567
         shell: pwsh
