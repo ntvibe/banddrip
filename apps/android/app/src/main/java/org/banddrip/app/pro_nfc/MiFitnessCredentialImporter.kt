@@ -1,5 +1,6 @@
 package org.banddrip.app.pro_nfc
 
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
@@ -17,6 +18,8 @@ object MiFitnessCredentialImporter {
         val occurrences: Int,
     )
 
+    private const val MAX_TEXT_ENTRY_BYTES = 32 * 1024 * 1024
+
     private val encryptKeyRegex = Regex(
         """(?i)[\"']?encryptKey[\"']?\s*[:=]\s*[\"']?([0-9a-f]{32})[\"']?""",
     )
@@ -29,6 +32,7 @@ object MiFitnessCredentialImporter {
         val authMatches = mutableListOf<Match>()
 
         ZipInputStream(zipStream.buffered()).use { zip ->
+            val buffer = ByteArray(16 * 1024)
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (entry.isDirectory) continue
@@ -36,18 +40,30 @@ object MiFitnessCredentialImporter {
                 if (!name.endsWith(".log", ignoreCase = true) &&
                     !name.endsWith(".txt", ignoreCase = true) &&
                     !name.endsWith(".json", ignoreCase = true)
-                ) continue
+                ) {
+                    zip.closeEntry()
+                    continue
+                }
 
-                zip.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                    lines.forEach { line ->
-                        encryptKeyRegex.findAll(line).forEach { match ->
-                            encryptMatches += Match(match.groupValues[1].lowercase(), name)
-                        }
-                        authKeyRegex.findAll(line).forEach { match ->
-                            authMatches += Match(match.groupValues[1].lowercase(), name)
-                        }
+                val bytes = ByteArrayOutputStream()
+                while (true) {
+                    val count = zip.read(buffer)
+                    if (count < 0) break
+                    if (bytes.size() + count > MAX_TEXT_ENTRY_BYTES) {
+                        error("Mi Fitness log entry is unexpectedly large: $name")
+                    }
+                    bytes.write(buffer, 0, count)
+                }
+                val text = bytes.toString(Charsets.UTF_8.name())
+                text.lineSequence().forEach { line ->
+                    encryptKeyRegex.findAll(line).forEach { match ->
+                        encryptMatches += Match(match.groupValues[1].lowercase(), name)
+                    }
+                    authKeyRegex.findAll(line).forEach { match ->
+                        authMatches += Match(match.groupValues[1].lowercase(), name)
                     }
                 }
+                zip.closeEntry()
             }
         }
 
