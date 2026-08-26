@@ -57,7 +57,7 @@ class WeatherProbeActivity : ComponentActivity() {
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            "This sends synthetic weather directly to Gadgetbridge. The values are intentionally weird so we can identify Xiaomi's field transforms on the band.",
+                            "CI trigger build 1 · This sends synthetic weather directly to Gadgetbridge. The values are intentionally weird so we can identify Xiaomi's field transforms on the band.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
 
