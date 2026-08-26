@@ -247,6 +247,9 @@ local function subscribe(key, target)
     end)
 end
 
+-- These are the five carriers verified by the weather transport experiment.
+-- Each subscription is isolated so a future firmware change degrades gracefully
+-- instead of black-screening the entire watchface.
 subscribe("weatherCurrentTemperature", "glucose")
 subscribe("weatherCurrentHumidity", "age")
 subscribe("weatherCurrentAirQualityIndex", "aqi")

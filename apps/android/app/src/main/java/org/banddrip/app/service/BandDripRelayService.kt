@@ -29,23 +29,28 @@ import org.banddrip.app.source.MockGlucoseSource
 import org.banddrip.app.source.NightscoutSource
 import org.banddrip.app.source.XDripHttpSource
 import org.banddrip.app.source.XDripSource
-import org.banddrip.app.transport.VirtualBandTransport
+import org.banddrip.app.transport.GadgetbridgeLinkWatchdog
+import org.banddrip.app.transport.WeatherBandTransport
 
 class BandDripRelayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var settingsStore: AppSettingsStore
     private lateinit var stateStore: RelayStateStore
-    private lateinit var transport: VirtualBandTransport
+    private lateinit var transport: WeatherBandTransport
+    private lateinit var linkWatchdog: GadgetbridgeLinkWatchdog
     private val engine = BandDripEngine()
     private lateinit var mockSource: MockGlucoseSource
     private var loopJob: Job? = null
     private var nextDueAtMs: Long = 0L
+    private var nextLinkCheckAtMs: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
         settingsStore = AppSettingsStore(this)
         stateStore = RelayStateStore(this)
-        transport = VirtualBandTransport { stateStore.savePacket(it) }
+        transport = WeatherBandTransport(this) { stateStore.savePacket(it) }
+        linkWatchdog = GadgetbridgeLinkWatchdog(this)
+        linkWatchdog.start()
         mockSource = MockGlucoseSource(configProvider = { settingsStore.load().mock })
         createNotificationChannel()
         enterForeground("Starting relay…")
@@ -63,6 +68,7 @@ class BandDripRelayService : Service() {
             }
             ACTION_REFRESH_NOW, ACTION_PROCESS_XDRIP, ACTION_SETTINGS_CHANGED -> {
                 nextDueAtMs = 0L
+                nextLinkCheckAtMs = 0L
                 scope.launch { runOnce(force = true) }
             }
         }
@@ -71,6 +77,7 @@ class BandDripRelayService : Service() {
     }
 
     override fun onDestroy() {
+        linkWatchdog.stop()
         stateStore.setServiceRunning(false)
         scope.cancel()
         super.onDestroy()
@@ -91,6 +98,17 @@ class BandDripRelayService : Service() {
                     }
 
                     val now = System.currentTimeMillis()
+                    if (now >= nextLinkCheckAtMs) {
+                        // Gadgetbridge's Bluetooth Intent API is idempotent: if
+                        // the band is already connected this becomes a no-op and
+                        // Gadgetbridge re-confirms the link; if disconnected it
+                        // triggers a real reconnect attempt. The watchdog learns
+                        // the address from Gadgetbridge itself, never from a
+                        // hardcoded/public MAC.
+                        linkWatchdog.ensureConnected()
+                        nextLinkCheckAtMs = now + LINK_CHECK_INTERVAL_MS
+                    }
+
                     if (now >= nextDueAtMs) {
                         runOnce(force = false)
                         nextDueAtMs = now + intervalMs(settings)
@@ -113,8 +131,13 @@ class BandDripRelayService : Service() {
             val settings = settingsStore.load()
             if (!settings.backgroundEnabled && !force) return
 
+            // Give Gadgetbridge a chance to restore a dropped RFCOMM socket
+            // before submitting the next glucose payload.
+            linkWatchdog.ensureConnected()
+
             val source = sourceFor(settings)
             if (source == null) {
+                runCatching { transport.sendUnavailable() }
                 stateStore.setStatus("Selected source is not configured")
                 updateNotification("Source needs configuration")
                 return
@@ -122,6 +145,10 @@ class BandDripRelayService : Service() {
 
             val snapshot = engine.refresh(source, transport, settings.showIob)
             if (snapshot.errorMessage != null) {
+                // Do not immediately blank a previously valid reading on a
+                // transient network/source failure. The watchface ages the last
+                // payload locally and marks it stale at 10 minutes even if the
+                // phone stops sending entirely.
                 stateStore.setStatus("${snapshot.sourceId}: ${snapshot.errorMessage}")
                 updateNotification("${snapshot.sourceId}: connection error")
                 return
@@ -129,8 +156,10 @@ class BandDripRelayService : Service() {
 
             val reading = snapshot.reading
             if (reading != null) {
-                stateStore.saveReading(reading, "${snapshot.sourceId} connected · reading received")
-                updateNotification("${snapshot.sourceId}: ${displayGlucose(reading.glucose)} ${reading.units.wireValue}")
+                stateStore.saveReading(reading, "${snapshot.sourceId} connected · sent to Gadgetbridge")
+                updateNotification(
+                    "${snapshot.sourceId}: ${displayGlucose(reading.glucose)} ${reading.units.wireValue} → band",
+                )
             } else {
                 stateStore.setStatus("${snapshot.sourceId}: connected, waiting for glucose")
                 updateNotification("${snapshot.sourceId}: waiting for glucose")
@@ -139,8 +168,8 @@ class BandDripRelayService : Service() {
             throw cancelled
         } catch (error: Throwable) {
             val message = safeError(error)
-            stateStore.setStatus("Source error: $message")
-            updateNotification("Source error · check BandDrip")
+            stateStore.setStatus("Source/transport error: $message")
+            updateNotification("Relay error · check BandDrip/Gadgetbridge")
         }
     }
 
@@ -191,7 +220,7 @@ class BandDripRelayService : Service() {
             "BandDrip background relay",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Keeps the selected glucose source connected to BandDrip in the background"
+            description = "Keeps glucose flowing through Gadgetbridge to the Smart Band watchface"
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
@@ -233,11 +262,11 @@ class BandDripRelayService : Service() {
     private fun summaryTextSafe(): String = runCatching {
         val settings = settingsStore.load()
         when (settings.sourceMode) {
-            SourceMode.Mock -> "Mock source"
-            SourceMode.Nightscout -> "Nightscout source"
+            SourceMode.Mock -> "Mock → Gadgetbridge"
+            SourceMode.Nightscout -> "Nightscout → Gadgetbridge"
             SourceMode.XDrip -> when (settings.xdripConnectionMode) {
-                XDripConnectionMode.Broadcast -> "xDrip broadcast source"
-                XDripConnectionMode.LocalServer -> "xDrip local server"
+                XDripConnectionMode.Broadcast -> "xDrip broadcast → Gadgetbridge"
+                XDripConnectionMode.LocalServer -> "xDrip local server → Gadgetbridge"
             }
         }
     }.getOrElse { "BandDrip relay" }
@@ -249,6 +278,7 @@ class BandDripRelayService : Service() {
         const val ACTION_STOP = "org.banddrip.action.STOP_RELAY"
         private const val CHANNEL_ID = "banddrip-relay"
         private const val NOTIFICATION_ID = 7801
+        private const val LINK_CHECK_INTERVAL_MS = 30_000L
 
         fun start(context: Context, action: String = ACTION_REFRESH_NOW) {
             val intent = Intent(context, BandDripRelayService::class.java).setAction(action)
