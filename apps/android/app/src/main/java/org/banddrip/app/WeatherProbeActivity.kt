@@ -53,6 +53,10 @@ class WeatherProbeActivity : ComponentActivity() {
                     ) {
                         Text("BandDrip Weather Probe", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                         Text(
+                            "Hardware probe build: synthetic weather → Gadgetbridge → Xiaomi → watchface.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
                             "This sends synthetic weather directly to Gadgetbridge. The values are intentionally weird so we can identify Xiaomi's field transforms on the band.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
