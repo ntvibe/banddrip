@@ -137,13 +137,13 @@ local function decodeFixed(value)
 end
 
 local function trendArrow(code)
-    if code == 1 then return "⇊" end
+    if code == 1 then return "↓↓" end
     if code == 2 then return "↓" end
     if code == 3 then return "↘" end
     if code == 4 then return "→" end
     if code == 5 then return "↗" end
     if code == 6 then return "↑" end
-    if code == 7 then return "⇈" end
+    if code == 7 then return "↑↑" end
     return ""
 end
 
