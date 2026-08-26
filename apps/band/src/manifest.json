@@ -1,13 +1,12 @@
 {
   "package": "org.banddrip.app",
-  "name": "BandDrip",
+  "name": "BandDrip Writer Probe",
   "icon": "/common/icon.svg",
-  "versionName": "0.1.0",
-  "versionCode": 1,
+  "versionName": "0.1.1-probe",
+  "versionCode": 2,
   "minAPILevel": 1,
   "deviceTypeList": ["watch"],
   "features": [
-    { "name": "system.interconnect" },
     { "name": "system.file" }
   ],
   "config": {
@@ -15,10 +14,10 @@
     "designWidth": 212
   },
   "router": {
-    "entry": "pages/index",
+    "entry": "pages/probe",
     "pages": {
-      "pages/index": {
-        "component": "index",
+      "pages/probe": {
+        "component": "probe",
         "path": "/",
         "launchMode": "singleTask"
       }
