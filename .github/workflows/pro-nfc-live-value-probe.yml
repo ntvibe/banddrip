@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - hardware/pro-nfc-live-value-probe
+      - hardware/pro-nfc-v2
     paths:
       - 'experiments/pro-nfc-live-value-probe/**'
       - '.github/workflows/pro-nfc-live-value-probe.yml'
