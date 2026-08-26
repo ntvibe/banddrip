@@ -43,3 +43,5 @@ This is a transport experiment only. It is **not** the intended production BandD
 ## Why this probe
 
 The RPK/Quick App writer route reaches the Xiaomi SPP transport on this band but the firmware does not answer the third-party app install service. A watchface `.face` does install successfully. This probe therefore stays entirely inside the already-working watchface path and tests a stock system data source rather than trying another RPK.
+
+The build workflow is intentionally triggered from the merged `hardware/pro-nfc-v2` branch so the generated `.face` is reproducible from the exact hardware-test source.
