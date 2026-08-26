@@ -76,12 +76,17 @@ object MiFitnessAuthKeyReader {
     }
 
     internal fun parseAuthKeys(text: String): List<String> {
-        // Mi Fitness has used several separator styles across builds, including
-        // `token: value`, `authKey=value` and `huamiAuthKey \"value\"`.
+        // Some Mi Fitness builds/log exporters escape quotes as \"...\".
+        // Normalize only those separators before matching so the parser remains
+        // strict about field names and 32-character hexadecimal key length.
+        val normalized = text
+            .replace("\\\"", "\"")
+            .replace("\\'", "'")
+
         val fieldPattern = Regex(
             """(?i)(?:huamiAuthKey|encryptKey|authKey|token)[\s\"':=]+([0-9a-f]{32})(?![0-9a-f])""",
         )
-        return fieldPattern.findAll(text)
+        return fieldPattern.findAll(normalized)
             .map { it.groupValues[1].lowercase() }
             .toList()
     }
