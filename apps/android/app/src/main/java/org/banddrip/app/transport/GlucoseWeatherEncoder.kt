@@ -150,11 +150,13 @@ object GlucoseWeatherEncoder {
         todayMaxTempKelvin = KELVIN_OFFSET,
     )
 
+    // Hardware probes are intentionally fresh so a single A/B test verifies
+    // glucose, age, delta, trend and the IOB carrier on the real watchface.
     fun probeA(nowMs: Long = System.currentTimeMillis()) = Payload(
         timestampSeconds = (nowMs / 1000L).toInt(),
         location = "BandDrip TEST A",
         currentTempKelvin = KELVIN_OFFSET + 123,
-        humidity = 42,
+        humidity = 2,
         conditionCode = 800,
         uvIndex = 6f,
         aqi = 155,
@@ -169,7 +171,7 @@ object GlucoseWeatherEncoder {
         timestampSeconds = (nowMs / 1000L).toInt(),
         location = "BandDrip TEST B",
         currentTempKelvin = KELVIN_OFFSET + 124,
-        humidity = 43,
+        humidity = 3,
         conditionCode = 801,
         uvIndex = 7f,
         aqi = 156,
