@@ -11,6 +11,11 @@
         <package android:name="com.eveningoutpost.dexdrip" />
         <package android:name="com.xiaomi.wearable" />
         <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="nodomain.freeyourgadget.gadgetbridge" />
+        <package android:name="nodomain.freeyourgadget.gadgetbridge.nightly" />
+        <package android:name="nodomain.freeyourgadget.gadgetbridge.nightly_nopebble" />
+        <package android:name="com.espruino.gadgetbridge.banglejs" />
+        <package android:name="com.espruino.gadgetbridge.banglejs.nightly" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/octet-stream" />
