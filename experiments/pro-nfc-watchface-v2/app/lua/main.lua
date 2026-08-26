@@ -1,12 +1,13 @@
 local lvgl = require("lvgl")
+local dataman = require("dataman")
 
--- BandDrip Smart Band 10 Pro NFC watchface v2.
--- v2 keeps the hardware-proven DeviceType 367 / 336x480 Lua container from v1
--- and replaces static demo data with read-only discovery of known glucose state
--- files used by WatchDrip-compatible Quick Apps and BandDrip's own glance bridge.
+-- BandDrip stock-firmware glucose face for Xiaomi Smart Band 10 Pro NFC.
+-- Android encodes glucose state into Gadgetbridge weather fields; this face
+-- decodes them and renders a diabetes-first glance display.
 
 local W = 336
 local H = 480
+local INT_MAX = 2147483647
 local STALE_MINUTES = 10
 local REFRESH_MS = 15000
 
@@ -14,388 +15,243 @@ local COLOR_BG = 0x000000
 local COLOR_PRIMARY = 0xFFFFFF
 local COLOR_STALE = 0xFF3B30
 local COLOR_DELTA = 0x64D2FF
-local COLOR_AGE = 0x8E8E93
+local COLOR_AGE = 0xA1A1A6
 local COLOR_IOB = 0xD1D1D6
-local COLOR_DIM = 0x6E6E73
-local COLOR_SOURCE = 0x30D158
+local COLOR_DIM = 0x636366
+local COLOR_OK = 0x30D158
 
-local SOURCES = {
-    -- Community WatchDrip-compatible paths proven on Xiaomi Band 9 Lua faces.
-    { kind = "watchdrip", path = "//data/quickapp/files/com.thatguysservice.huami_xdrip/info.json", label = "WATCHDRIP" },
-    { kind = "watchdrip", path = "//data/quickapp/files/com.application.watch.watchdrip/info.json", label = "WATCHDRIP" },
-
-    -- BandDrip glance bridge candidates. Keep these read-only until hardware proves
-    -- the exact Smart Band 10 Pro NFC Quick App sandbox mapping.
-    { kind = "banddrip", path = "//data/quickapp/files/org.banddrip.app/glance.json", label = "BANDDRIP" },
-    { kind = "banddrip", path = "/data/quickapp/file/org.banddrip.app/glance.json", label = "BANDDRIP" },
-    { kind = "banddrip", path = "/data/quickapp/files/org.banddrip.app/glance.json", label = "BANDDRIP" },
-    { kind = "banddrip", path = "/data/quickapp/file/org.banddrip.app/files/glance.json", label = "BANDDRIP" },
+local state = {
+    glucose = nil,
+    age = nil,
+    aqi = nil,
+    trend = nil,
+    pressure = nil,
+    lastTransportUpdate = nil,
 }
 
 local rootbase = lvgl.Object(nil, {
-    w = lvgl.HOR_RES(),
-    h = lvgl.VER_RES(),
-    bg_color = COLOR_BG,
-    bg_opa = lvgl.OPA(100),
-    border_width = 0,
+    w = lvgl.HOR_RES(), h = lvgl.VER_RES(),
+    bg_color = COLOR_BG, bg_opa = lvgl.OPA(100), border_width = 0,
 })
 rootbase:clear_flag(lvgl.FLAG.SCROLLABLE)
 rootbase:add_flag(lvgl.FLAG.EVENT_BUBBLE)
 
 local root = lvgl.Object(rootbase, {
-    w = W,
-    h = H,
-    align = lvgl.ALIGN.CENTER,
-    bg_color = COLOR_BG,
-    bg_opa = lvgl.OPA(100),
-    outline_width = 0,
-    border_width = 0,
-    pad_all = 0,
+    w = W, h = H, align = lvgl.ALIGN.CENTER,
+    bg_color = COLOR_BG, bg_opa = lvgl.OPA(100),
+    border_width = 0, outline_width = 0, pad_all = 0,
 })
 root:clear_flag(lvgl.FLAG.SCROLLABLE)
 root:add_flag(lvgl.FLAG.EVENT_BUBBLE)
 
-local sourceLabel = lvgl.Label(root, {
-    x = 0,
-    y = 24,
-    width = W,
-    text = "BANDDRIP V2  •  WAITING",
+local statusLabel = lvgl.Label(root, {
+    x = 0, y = 22, width = W,
+    text = "BANDDRIP  •  WAITING",
     text_color = COLOR_DIM,
-    text_font = lvgl.Font("MiSans-Regular", 17),
+    text_font = lvgl.Font("MiSans-Regular", 16),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local glucose = lvgl.Label(root, {
-    x = 20,
-    y = 82,
-    width = 222,
+local glucoseLabel = lvgl.Label(root, {
+    x = 18, y = 72, width = 225,
     text = "---",
     text_color = COLOR_STALE,
-    text_font = lvgl.Font("MiSans-Regular", 86),
+    text_font = lvgl.Font("MiSans-Regular", 88),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local trend = lvgl.Label(root, {
-    x = 228,
-    y = 108,
-    width = 88,
+local trendLabel = lvgl.Label(root, {
+    x = 224, y = 104, width = 96,
     text = "",
     text_color = COLOR_PRIMARY,
-    text_font = lvgl.Font("MiSans-Regular", 52),
+    text_font = lvgl.Font("MiSans-Regular", 54),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
 local strike = lvgl.Object(root, {
-    x = 44,
-    y = 145,
-    w = 0,
-    h = 5,
-    bg_color = COLOR_STALE,
-    bg_opa = lvgl.OPA(100),
-    border_width = 0,
-    radius = 2,
+    x = 45, y = 142, w = 0, h = 5,
+    bg_color = COLOR_STALE, bg_opa = lvgl.OPA(100),
+    border_width = 0, radius = 2,
 })
 
-local delta = lvgl.Label(root, {
-    x = 24,
-    y = 217,
-    width = 100,
+local deltaLabel = lvgl.Label(root, {
+    x = 22, y = 207, width = 110,
     text = "--",
     text_color = COLOR_DELTA,
-    text_font = lvgl.Font("MiSans-Regular", 31),
+    text_font = lvgl.Font("MiSans-Regular", 32),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local separator = lvgl.Label(root, {
-    x = 128,
-    y = 217,
-    width = 32,
+local dotLabel = lvgl.Label(root, {
+    x = 132, y = 207, width = 28,
     text = "·",
     text_color = COLOR_DIM,
-    text_font = lvgl.Font("MiSans-Regular", 31),
+    text_font = lvgl.Font("MiSans-Regular", 32),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local age = lvgl.Label(root, {
-    x = 158,
-    y = 217,
-    width = 150,
+local ageLabel = lvgl.Label(root, {
+    x = 158, y = 207, width = 154,
     text = "--m ago",
     text_color = COLOR_AGE,
-    text_font = lvgl.Font("MiSans-Regular", 31),
+    text_font = lvgl.Font("MiSans-Regular", 30),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local iob = lvgl.Label(root, {
-    x = 0,
-    y = 282,
-    width = W,
+local iobLabel = lvgl.Label(root, {
+    x = 0, y = 276, width = W,
     text = "IOB —",
     text_color = COLOR_IOB,
     text_font = lvgl.Font("MiSans-Regular", 27),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local clock = lvgl.Label(root, {
-    x = 0,
-    y = 365,
-    width = W,
+local clockLabel = lvgl.Label(root, {
+    x = 0, y = 354, width = W,
     text = "--:--",
     text_color = COLOR_PRIMARY,
-    text_font = lvgl.Font("MiSans-Regular", 44),
+    text_font = lvgl.Font("MiSans-Regular", 46),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
 local dateLabel = lvgl.Label(root, {
-    x = 0,
-    y = 417,
-    width = W,
+    x = 0, y = 410, width = W,
     text = "",
     text_color = COLOR_AGE,
     text_font = lvgl.Font("MiSans-Regular", 18),
     text_align = lvgl.ALIGN.TOP_MID,
 })
 
-local activeSourcePath = nil
-local activeSourceKind = nil
-local activeSourceLabel = nil
-local lastJson = nil
-local state = nil
+local footer = lvgl.Label(root, {
+    x = 0, y = 450, width = W,
+    text = "GADGETBRIDGE WEATHER LINK",
+    text_color = COLOR_DIM,
+    text_font = lvgl.Font("MiSans-Regular", 10),
+    text_align = lvgl.ALIGN.TOP_MID,
+})
 
-local function readText(path)
-    local file = io.open(path, "r")
-    if not file then return nil end
-    local ok, content = pcall(function() return file:read("*all") end)
-    file:close()
-    if not ok then return nil end
-    if not content or #content == 0 then return nil end
-    return content
+local function decodeFixed(value)
+    if value == nil or type(value) ~= "number" then return nil end
+    if value == INT_MAX then return nil end
+    return value // 256
 end
 
-local function findReadableSource()
-    if activeSourcePath then
-        local content = readText(activeSourcePath)
-        if content then
-            return content, activeSourceKind, activeSourceLabel, activeSourcePath
-        end
-        activeSourcePath = nil
-        activeSourceKind = nil
-        activeSourceLabel = nil
-    end
-
-    for _, source in ipairs(SOURCES) do
-        local content = readText(source.path)
-        if content then
-            activeSourcePath = source.path
-            activeSourceKind = source.kind
-            activeSourceLabel = source.label
-            return content, source.kind, source.label, source.path
-        end
-    end
-
-    return nil, nil, nil, nil
-end
-
-local function jsonObject(json, key)
-    if not json then return nil end
-    return json:match('"' .. key .. '"%s*:%s*(%b{})')
-end
-
-local function jsonString(json, key)
-    if not json then return nil end
-    return json:match('"' .. key .. '"%s*:%s*"([^"]*)"')
-end
-
-local function jsonNumber(json, key)
-    if not json then return nil end
-    local raw = json:match('"' .. key .. '"%s*:%s*"([%+%-0-9%.]+)"')
-    if not raw then
-        raw = json:match('"' .. key .. '"%s*:%s*([%+%-0-9%.]+)')
-    end
-    if not raw then return nil end
-    return tonumber(raw)
-end
-
-local function jsonBoolean(json, key, fallback)
-    if not json then return fallback end
-    if json:match('"' .. key .. '"%s*:%s*true') then return true end
-    if json:match('"' .. key .. '"%s*:%s*false') then return false end
-    return fallback
-end
-
-local function normalizeTimestampMs(value)
-    if not value or value <= 0 then return nil end
-    if value < 100000000000 then return value * 1000 end
-    return value
-end
-
-local function parseBandDrip(json)
-    local glucoseValue = jsonNumber(json, "glucose")
-    local timestamp = normalizeTimestampMs(jsonNumber(json, "glucoseTimestampMs") or jsonNumber(json, "timestampMs"))
-    if not glucoseValue or not timestamp then return nil end
-
-    return {
-        glucose = glucoseValue,
-        delta = jsonNumber(json, "delta"),
-        trend = jsonString(json, "trend") or "None",
-        timestampMs = timestamp,
-        units = jsonString(json, "units") or "mg/dL",
-        iob = jsonNumber(json, "iobUnits"),
-        iobTimestampMs = normalizeTimestampMs(jsonNumber(json, "iobTimestampMs")),
-        showIob = jsonBoolean(json, "showIob", true),
-        source = "BANDDRIP",
-    }
-end
-
-local function parseWatchDrip(json)
-    local bg = jsonObject(json, "bg")
-    if not bg then return nil end
-
-    local status = jsonObject(json, "status") or ""
-    local glucoseValue = jsonNumber(bg, "val")
-    local timestamp = normalizeTimestampMs(jsonNumber(bg, "time"))
-    if not glucoseValue or not timestamp then return nil end
-
-    local isMgdl = jsonBoolean(status, "isMgdl", true)
-
-    return {
-        glucose = glucoseValue,
-        delta = jsonNumber(bg, "delta"),
-        trend = jsonString(bg, "trend") or "None",
-        timestampMs = timestamp,
-        units = isMgdl and "mg/dL" or "mmol/L",
-        iob = nil,
-        iobTimestampMs = nil,
-        showIob = true,
-        source = "WATCHDRIP",
-    }
-end
-
-local function parseState(json, kind)
-    if kind == "watchdrip" then return parseWatchDrip(json) end
-    if kind == "banddrip" then return parseBandDrip(json) end
-    return nil
-end
-
-local function nowMs()
-    return os.time() * 1000
-end
-
-local function ageMinutes(timestampMs)
-    if not timestampMs or timestampMs <= 0 then return nil end
-    local value = math.floor((nowMs() - timestampMs) / 60000)
-    if value < 0 then value = 0 end
-    return value
-end
-
-local function normalizeTrend(value)
-    if not value then return "" end
-    return string.lower((value:gsub("[%s_%-]", "")))
-end
-
-local function trendArrow(value)
-    local v = normalizeTrend(value)
-    if v == "doubleup" then return "⇈" end
-    if v == "singleup" then return "↑" end
-    if v == "fortyfiveup" then return "↗" end
-    if v == "flat" then return "→" end
-    if v == "fortyfivedown" then return "↘" end
-    if v == "singledown" then return "↓" end
-    if v == "doubledown" then return "⇊" end
+local function trendArrow(code)
+    if code == 1 then return "⇊" end
+    if code == 2 then return "↓" end
+    if code == 3 then return "↘" end
+    if code == 4 then return "→" end
+    if code == 5 then return "↗" end
+    if code == 6 then return "↑" end
+    if code == 7 then return "⇈" end
     return ""
 end
 
-local function roundNearest(value)
-    if value >= 0 then return math.floor(value + 0.5) end
-    return math.ceil(value - 0.5)
+local function effectiveAge()
+    if state.age == nil then return nil end
+    local extra = 0
+    if state.lastTransportUpdate ~= nil then
+        extra = math.floor(math.max(0, os.time() - state.lastTransportUpdate) / 60)
+    end
+    return state.age + extra
 end
 
-local function glucoseText(s)
-    if s.units == "mmol/L" then return string.format("%.1f", s.glucose) end
-    return string.format("%d", roundNearest(s.glucose))
+local function decodedDelta()
+    if state.aqi == nil then return nil end
+    if state.aqi < 1 or state.aqi > 199 then return nil end
+    return state.aqi - 100
 end
 
-local function deltaText(s)
-    if s.delta == nil then return "--" end
-    if s.units == "mmol/L" then return string.format("%+.1f", s.delta) end
-    return string.format("%+d", roundNearest(s.delta))
+local function decodedIob()
+    if state.pressure == nil or state.pressure < 100 then return nil end
+    return (state.pressure - 100) / 1000
 end
 
-local function setStrike(stale, textLength)
+local function setStrike(stale, glucoseText)
     if not stale then
         strike:set { w = 0 }
         return
     end
-    local width = math.min(230, math.max(100, textLength * 58))
-    strike:set { x = math.floor((W - width) / 2) - 22, w = width }
-end
-
-local function clearReading()
-    sourceLabel:set { text = "BANDDRIP V2  •  WAITING", text_color = COLOR_DIM }
-    glucose:set { text = "---", text_color = COLOR_STALE }
-    trend:set { text = "", text_color = COLOR_STALE }
-    delta:set { text = "--" }
-    age:set { text = "--m ago" }
-    iob:set { text = "IOB —" }
-    strike:set { w = 0 }
-end
-
-local function renderReading(s)
-    local glucoseAge = ageMinutes(s.timestampMs)
-    local stale = glucoseAge == nil or glucoseAge >= STALE_MINUTES
-    local mainColor = stale and COLOR_STALE or COLOR_PRIMARY
-    local gText = glucoseText(s)
-
-    sourceLabel:set {
-        text = "BANDDRIP V2  •  " .. (s.source or "LIVE"),
-        text_color = COLOR_SOURCE,
-    }
-    glucose:set { text = gText, text_color = mainColor }
-    trend:set { text = trendArrow(s.trend), text_color = mainColor }
-    delta:set { text = deltaText(s) }
-    age:set { text = glucoseAge and (tostring(glucoseAge) .. "m ago") or "--m ago" }
-    setStrike(stale, #gText)
-
-    if s.showIob == false then
-        iob:set { text = "" }
-    elseif s.iob ~= nil then
-        local iobAge = ageMinutes(s.iobTimestampMs or s.timestampMs)
-        if iobAge ~= nil and iobAge < STALE_MINUTES then
-            iob:set { text = string.format("IOB %.3f U", s.iob) }
-        else
-            iob:set { text = "IOB —" }
-        end
-    else
-        iob:set { text = "IOB —" }
-    end
+    local width = math.min(225, math.max(105, #glucoseText * 58))
+    strike:set { x = math.floor((W - width) / 2) - 20, w = width }
 end
 
 local function renderClock()
-    clock:set { text = os.date("%H:%M") }
+    clockLabel:set { text = os.date("%H:%M") }
     dateLabel:set { text = string.upper(os.date("%a %d %b")) }
+end
+
+local function renderNoData()
+    statusLabel:set { text = "BANDDRIP  •  NO DATA", text_color = COLOR_STALE }
+    glucoseLabel:set { text = "---", text_color = COLOR_STALE }
+    trendLabel:set { text = "", text_color = COLOR_STALE }
+    deltaLabel:set { text = "--" }
+    ageLabel:set { text = "--m ago", text_color = COLOR_STALE }
+    iobLabel:set { text = "IOB —" }
+    strike:set { w = 0 }
 end
 
 local function render()
     renderClock()
 
-    local json, kind = findReadableSource()
-    if json then
-        if json ~= lastJson or not state then
-            local parsed = parseState(json, kind)
-            if parsed then state = parsed end
-            lastJson = json
-        end
-    else
-        state = nil
-        lastJson = nil
+    if state.glucose == nil or state.glucose <= 0 then
+        renderNoData()
+        return
     end
 
-    if state then
-        renderReading(state)
+    local age = effectiveAge()
+    local stale = age == nil or age >= STALE_MINUTES
+    local mainColor = stale and COLOR_STALE or COLOR_PRIMARY
+    local glucoseText = tostring(state.glucose)
+
+    statusLabel:set {
+        text = stale and "BANDDRIP  •  STALE" or "BANDDRIP  •  LIVE",
+        text_color = stale and COLOR_STALE or COLOR_OK,
+    }
+    glucoseLabel:set { text = glucoseText, text_color = mainColor }
+    trendLabel:set { text = trendArrow(state.trend), text_color = mainColor }
+
+    local delta = decodedDelta()
+    if delta == nil then
+        deltaLabel:set { text = "--" }
     else
-        clearReading()
+        deltaLabel:set { text = string.format("%+d", delta) }
     end
+
+    if age == nil then
+        ageLabel:set { text = "--m ago", text_color = COLOR_STALE }
+    else
+        ageLabel:set {
+            text = tostring(age) .. "m ago",
+            text_color = stale and COLOR_STALE or COLOR_AGE,
+        }
+    end
+
+    local iob = decodedIob()
+    if iob == nil or stale then
+        iobLabel:set { text = "IOB —" }
+    else
+        iobLabel:set { text = string.format("IOB %.3f U", iob) }
+    end
+
+    setStrike(stale, glucoseText)
 end
+
+local function subscribe(key, target)
+    return pcall(function()
+        dataman.subscribe(key, root, function(_, value)
+            state[target] = decodeFixed(value)
+            state.lastTransportUpdate = os.time()
+            render()
+        end)
+    end)
+end
+
+subscribe("weatherCurrentTemperature", "glucose")
+subscribe("weatherCurrentHumidity", "age")
+subscribe("weatherCurrentAirQualityIndex", "aqi")
+subscribe("weatherCurrentUVIndex", "trend")
+subscribe("weatherCurrentPressure", "pressure")
 
 render()
 
