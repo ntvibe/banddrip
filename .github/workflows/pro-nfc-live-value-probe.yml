@@ -1,0 +1,106 @@
+name: Build Pro NFC live-value probe
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/pro-nfc-live-value-probe/**'
+      - '.github/workflows/pro-nfc-live-value-probe.yml'
+  push:
+    branches:
+      - hardware/pro-nfc-live-value-probe
+      - hardware/pro-nfc-v2
+    paths:
+      - 'experiments/pro-nfc-live-value-probe/**'
+      - '.github/workflows/pro-nfc-live-value-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Prepare EasyFace-compatible project
+        shell: powershell
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'experiments\pro-nfc-live-value-probe'
+          $images = Join-Path $root 'images'
+          $bin = Join-Path $root 'bin'
+          $scratch = Join-Path $root 'output'
+          New-Item -ItemType Directory -Force -Path $images, $bin, $scratch | Out-Null
+
+          $fprj = Join-Path $root 'BandDripLiveValueProbe.fprj'
+          $xml = Get-Content -Raw -Path $fprj
+          [System.IO.File]::WriteAllText($fprj, $xml, [System.Text.Encoding]::Unicode)
+
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 230,328
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+          $g.Clear([System.Drawing.Color]::Black)
+          $white = [System.Drawing.Brushes]::White
+          $gray = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(142,142,147))
+          $green = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(48,209,88))
+          $blue = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(100,210,255))
+          $big = New-Object System.Drawing.Font('Arial',48,[System.Drawing.FontStyle]::Bold)
+          $mid = New-Object System.Drawing.Font('Arial',15,[System.Drawing.FontStyle]::Regular)
+          $small = New-Object System.Drawing.Font('Arial',9,[System.Drawing.FontStyle]::Regular)
+          $center = New-Object System.Drawing.StringFormat
+          $center.Alignment = [System.Drawing.StringAlignment]::Center
+
+          $g.DrawString('ALARM CHANNEL - LIVE',$small,$green,(New-Object System.Drawing.RectangleF 0,18,230,24),$center)
+          $g.DrawString('123',$big,$white,(New-Object System.Drawing.RectangleF 0,58,230,76),$center)
+          $g.DrawString('→',$mid,$blue,(New-Object System.Drawing.RectangleF 0,140,230,30),$center)
+          $g.DrawString('alarm 02:03',$mid,$gray,(New-Object System.Drawing.RectangleF 0,180,230,30),$center)
+          $g.DrawString('02:03 = 123',$small,$gray,(New-Object System.Drawing.RectangleF 0,224,230,22),$center)
+          $g.DrawString('02:04 = 124',$small,$gray,(New-Object System.Drawing.RectangleF 0,246,230,22),$center)
+          $g.DrawString('DATAMAN  BAT 82%',$small,$gray,(New-Object System.Drawing.RectangleF 0,288,230,22),$center)
+
+          $preview = Join-Path $images 'preview_rgba.png'
+          $bmp.Save($preview,[System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose(); $gray.Dispose(); $green.Dispose(); $blue.Dispose(); $big.Dispose(); $mid.Dispose(); $small.Dispose(); $center.Dispose()
+
+          Write-Host "Prepared $fprj"
+          Write-Host "Prepared $preview"
+
+      - name: Download community watchface compiler
+        shell: powershell
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'banddrip-watchface-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $compiler = Join-Path $tools 'Compiler.exe'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/FangAiden/LuaDevTemplate/main/watchface/tools/Compiler.exe' -OutFile $compiler
+          if (-not (Test-Path $compiler)) { throw 'Compiler download failed' }
+          Write-Host "Compiler SHA256: $((Get-FileHash $compiler -Algorithm SHA256).Hash)"
+
+      - name: Compile BandDripLiveValueProbe.face
+        shell: powershell
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'experiments\pro-nfc-live-value-probe'
+          $fprj = Join-Path $root 'BandDripLiveValueProbe.fprj'
+          $out = Join-Path $root 'bin'
+          $compiler = Join-Path $env:RUNNER_TEMP 'banddrip-watchface-tools\Compiler.exe'
+          $faceName = 'BandDripLiveValueProbe.face'
+          $faceId = '1908261003'
+
+          & $compiler -b $fprj $out $faceName $faceId
+          if ($LASTEXITCODE -ne 0) { throw "Compiler exited with $LASTEXITCODE" }
+
+          $face = Join-Path $out $faceName
+          if (-not (Test-Path $face)) { throw "Expected face not produced: $face" }
+          if ((Get-Item $face).Length -lt 1024) { throw 'Compiled face is unexpectedly small' }
+          Write-Host "FACE=$face"
+          Write-Host "SIZE=$((Get-Item $face).Length)"
+          Write-Host "SHA256=$((Get-FileHash $face -Algorithm SHA256).Hash)"
+
+      - name: Upload installable watchface
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandDripLiveValueProbe-face
+          path: experiments/pro-nfc-live-value-probe/bin/BandDripLiveValueProbe.face
+          if-no-files-found: error
+          retention-days: 30
