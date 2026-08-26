@@ -103,12 +103,13 @@ object GlucoseWeatherEncoder {
             Trend.DoubleUp -> 7
         }
 
-        val iobFresh = reading.iobUnits != null &&
-            reading.iobTimestampMs != null &&
-            !FreshnessPolicy.isStale(reading.iobTimestampMs, nowMs)
-        val encodedIob = if (showIob && iobFresh) {
-            val milliUnits = (reading.iobUnits!!
-                .coerceIn(0.0, IOB_MAX_UNITS) * 1000.0)
+        val iobUnits = reading.iobUnits
+        val iobTimestampMs = reading.iobTimestampMs
+        val iobFresh = iobUnits != null &&
+            iobTimestampMs != null &&
+            !FreshnessPolicy.isStale(iobTimestampMs, nowMs)
+        val encodedIob = if (showIob && iobFresh && iobUnits != null) {
+            val milliUnits = (iobUnits.coerceIn(0.0, IOB_MAX_UNITS) * 1000.0)
                 .roundToInt()
             (IOB_BASE + milliUnits).toFloat()
         } else {
