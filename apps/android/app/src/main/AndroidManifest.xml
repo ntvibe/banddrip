@@ -15,6 +15,9 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/octet-stream" />
         </intent>
+        <intent>
+            <action android:name="nodomain.freeyourgadget.gadgetbridge.ACTION_GENERIC_WEATHER" />
+        </intent>
     </queries>
 
     <application
@@ -27,6 +30,16 @@
         <activity
             android:name=".MainActivity"
             android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".WeatherProbeActivity"
+            android:exported="true"
+            android:label="BandDrip Weather Probe">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
