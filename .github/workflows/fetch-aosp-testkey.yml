@@ -1,0 +1,31 @@
+name: Fetch AOSP testkey
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fetch-aosp-testkey.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public AOSP testkey
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          curl -L --fail --retry 3 'https://raw.githubusercontent.com/aosp-mirror/platform_build/master/target/product/security/testkey.pk8' -o out/testkey.pk8
+          curl -L --fail --retry 3 'https://raw.githubusercontent.com/aosp-mirror/platform_build/master/target/product/security/testkey.x509.pem' -o out/testkey.x509.pem
+          openssl x509 -in out/testkey.x509.pem -noout -subject -fingerprint -sha256 | tee out/CERT.txt
+          sha256sum out/testkey.pk8 out/testkey.x509.pem > out/SHA256SUMS.txt
+      - name: Upload short-lived key artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aosp-testkey
+          path: out/
+          retention-days: 1
+          compression-level: 0
