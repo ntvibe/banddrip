@@ -1,0 +1,28 @@
+name: Fetch Mi Fitness 3.33.6i lab input
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fetch-mifitness-333006.yml'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download official Mi Fitness 3.33.6i arm64 XAPK
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' 'https://d.apkpure.net/b/XAPK/com.xiaomi.wearable?nc=arm64-v8a&sv=23&versionCode=333006' -o out/MiFitness_3.33.6i_official.xapk
+          sha256sum out/MiFitness_3.33.6i_official.xapk | tee out/SHA256SUMS.txt
+          test "$(stat -c%s out/MiFitness_3.33.6i_official.xapk)" -gt 100000000
+          unzip -l out/MiFitness_3.33.6i_official.xapk | head -n 80 | tee out/archive-list.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mifitness-333006-official
+          path: out/
+          retention-days: 1
+          compression-level: 0
