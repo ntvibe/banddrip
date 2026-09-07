@@ -1,0 +1,100 @@
+<template>
+  <div class="page">
+    <text class="title">BANDDRIP WRITER</text>
+    <text class="value">123 →</text>
+    <text class="meta">+7 · LIVE PROBE</text>
+    <text class="iob">IOB 0.321 U</text>
+    <text class="status">{{statusText}}</text>
+  </div>
+</template>
+
+<style>
+  .page {
+    width: 212px;
+    height: 520px;
+    background-color: #000000;
+    padding-top: 78px;
+    align-items: center;
+  }
+
+  .title {
+    font-size: 17px;
+    color: #30d158;
+  }
+
+  .value {
+    margin-top: 42px;
+    font-size: 68px;
+    font-weight: 700;
+    color: #ffffff;
+  }
+
+  .meta {
+    margin-top: 20px;
+    font-size: 26px;
+    color: #64d2ff;
+  }
+
+  .iob {
+    margin-top: 24px;
+    font-size: 23px;
+    color: #d1d1d6;
+  }
+
+  .status {
+    margin-top: 54px;
+    font-size: 15px;
+    color: #8e8e93;
+  }
+</style>
+
+<script>
+  import file from '@system.file'
+
+  const URI = 'internal://files/glance.json'
+
+  export default {
+    private: {
+      statusText: 'WRITING…'
+    },
+
+    onInit() {
+      this.writeProbe()
+    },
+
+    onShow() {
+      this.writeProbe()
+    },
+
+    writeProbe() {
+      const now = Date.now()
+      const state = {
+        version: 1,
+        glucose: 123,
+        units: 'mg/dL',
+        delta: 7,
+        trend: 'flat',
+        glucoseTimestampMs: now,
+        iobUnits: 0.321,
+        iobTimestampMs: now,
+        showIob: true,
+        writtenAtMs: now,
+        probe: true
+      }
+
+      file.writeText({
+        uri: URI,
+        text: JSON.stringify(state),
+        append: false,
+        success: () => {
+          this.statusText = 'GLANCE.JSON WRITTEN'
+          console.info('BandDrip writer probe persisted glance.json')
+        },
+        fail: (data, code) => {
+          this.statusText = `WRITE FAILED ${code}`
+          console.error(`BandDrip writer probe failed: ${code} ${data || ''}`)
+        }
+      })
+    }
+  }
+</script>

@@ -1,0 +1,49 @@
+name: Build Pro NFC writer probe RPK
+
+on:
+  push:
+    branches:
+      - hardware/pro-nfc-writer-probe
+    paths:
+      - 'apps/band/**'
+      - '.github/workflows/pro-nfc-writer-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/band
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install Vela tooling
+        run: npm install
+
+      - name: Run wearable logic tests
+        run: npm test
+
+      - name: Build writer probe RPK
+        run: npm run build
+
+      - name: Show produced files
+        run: find . -maxdepth 3 -type f | sort | grep -E '\.(rpk|hap)$' || true
+
+      - name: Upload writer probe RPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandDrip-Pro-NFC-writer-probe
+          path: apps/band/dist/*.rpk
+          if-no-files-found: error
+          retention-days: 30
