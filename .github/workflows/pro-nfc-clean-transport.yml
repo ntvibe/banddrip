@@ -5,12 +5,6 @@ on:
     paths:
       - 'experiments/pro-nfc-clean-transport/**'
       - '.github/workflows/pro-nfc-clean-transport.yml'
-  push:
-    branches:
-      - hardware/pro-nfc-clean-transport
-    paths:
-      - 'experiments/pro-nfc-clean-transport/**'
-      - '.github/workflows/pro-nfc-clean-transport.yml'
   workflow_dispatch:
 
 permissions:
@@ -87,12 +81,12 @@ jobs:
           $center.Alignment = [System.Drawing.StringAlignment]::Center
 
           $g.DrawString('BANDDRIP P0',$small,$green,(New-Object System.Drawing.RectangleF 0,20,230,28),$center)
-          $g.DrawString('112',$big,$white,(New-Object System.Drawing.RectangleF 0,62,175,70),$center)
-          $g.DrawString('v',$mid,$white,(New-Object System.Drawing.RectangleF 160,82,45,38),$center)
-          $g.DrawString('+6',$mid,$blue,(New-Object System.Drawing.RectangleF 22,150,62,34),$center)
-          $g.DrawString('3m ago',$mid,$gray,(New-Object System.Drawing.RectangleF 108,150,102,34),$center)
-          $g.DrawString('IOB 0.250 U',$mid,$gray,(New-Object System.Drawing.RectangleF 0,196,230,34),$center)
-          $g.DrawString('10:24',$mid,$white,(New-Object System.Drawing.RectangleF 0,254,230,34),$center)
+          $g.DrawString('P0',$big,$white,(New-Object System.Drawing.RectangleF 0,62,175,70),$center)
+          $g.DrawString('',$mid,$white,(New-Object System.Drawing.RectangleF 160,82,45,38),$center)
+          $g.DrawString('TEST',$mid,$blue,(New-Object System.Drawing.RectangleF 22,150,62,34),$center)
+          $g.DrawString('ONLY',$mid,$gray,(New-Object System.Drawing.RectangleF 108,150,102,34),$center)
+          $g.DrawString('Transport diagnostics',$mid,$gray,(New-Object System.Drawing.RectangleF 0,196,230,34),$center)
+          $g.DrawString('No glucose',$mid,$white,(New-Object System.Drawing.RectangleF 0,254,230,34),$center)
 
           $preview = Join-Path $images 'preview_rgba.png'
           $bmp.Save($preview,[System.Drawing.Imaging.ImageFormat]::Png)
