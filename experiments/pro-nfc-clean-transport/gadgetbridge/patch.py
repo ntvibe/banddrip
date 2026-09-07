@@ -64,5 +64,7 @@ assert s.count(needle) == 1
 p.write_text(s.replace(needle, 'applicationId "org.banddrip.gadgetbridge.probe"'))
 p = root / 'app/src/mainline/res/values/strings.xml'
 s = p.read_text()
+assert 'com.getpebble.android.provider' in s
+s = s.replace('com.getpebble.android.provider', 'org.banddrip.gadgetbridge.probe.pebble.provider')
 p.write_text(s.replace('@string/application_name_generic', 'BandDrip GB Probe'))
 print('Applied bounded read-only BandDrip diagnostics')
