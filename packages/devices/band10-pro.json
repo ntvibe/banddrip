@@ -1,0 +1,18 @@
+{
+  "id": "band10-pro",
+  "name": "Xiaomi Smart Band 10 Pro",
+  "family": "smart-band-pro",
+  "width": 336,
+  "height": 480,
+  "shape": "rounded-rectangle",
+  "cornerRadius": 56,
+  "geometryConfidence": "verified",
+  "banddripTarget": "experimental-watchface",
+  "capabilities": {
+    "velaQuickApp": false,
+    "systemInterconnect": false,
+    "luaWatchFaceResearch": true,
+    "officialThirdPartyAppPath": "not-supported"
+  },
+  "notes": "Experimental BandDrip watch-face target. Xiaomi currently states that third-party app installation is not supported, so do not assume the Band 10 RPK transport architecture works here."
+}

@@ -1,0 +1,18 @@
+{
+  "id": "band8-pro",
+  "name": "Xiaomi Smart Band 8 Pro",
+  "family": "smart-band-pro",
+  "width": 336,
+  "height": 480,
+  "shape": "rounded-rectangle",
+  "cornerRadius": 56,
+  "geometryConfidence": "vela-emulator-skin",
+  "banddripTarget": "emulator-research",
+  "capabilities": {
+    "velaQuickApp": "research",
+    "systemInterconnect": "research",
+    "luaWatchFaceResearch": true,
+    "officialThirdPartyAppPath": "unknown"
+  },
+  "notes": "Geometry/emulator research profile. This is not a claim that the complete BandDrip transport stack is supported on Band 8 Pro."
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://banddrip.dev/schema/settings.schema.json",
+  "title": "BandDripSettingsPacket",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "type", "showIob"],
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "type": { "const": "settings" },
+    "showIob": { "type": "boolean", "default": true }
+  }
+}

@@ -1,0 +1,20 @@
+<script>
+/**manifest**/
+export default {
+  onCreate() {
+    console.info('BandDrip created')
+  },
+  onShow() {
+    console.info('BandDrip shown')
+  },
+  onHide() {
+    console.info('BandDrip hidden')
+  },
+  onDestroy() {
+    console.info('BandDrip destroyed')
+  },
+  onError(error) {
+    console.error('BandDrip app error', error)
+  }
+}
+</script>

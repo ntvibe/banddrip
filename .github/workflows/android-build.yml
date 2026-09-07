@@ -1,0 +1,174 @@
+name: Android build
+
+on:
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - 'apps/band/**'
+      - 'packages/display-spec/**'
+      - 'tools/installer/**'
+      - '.github/workflows/android-build.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/android/**'
+      - 'apps/band/**'
+      - 'packages/display-spec/**'
+      - 'tools/installer/**'
+      - '.github/workflows/android-build.yml'
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    env:
+      BANDDRIP_USE_SHARED_DEBUG_SIGNING: 'true'
+    defaults:
+      run:
+        working-directory: apps/android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 37 SDK packages
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+
+      - name: Restore BandDrip debug signing identity when available
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: banddrip-shared-debug-signing-v1
+
+      - name: Prepare shared Android + Vela debug signing identity
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android" ../band/sign
+
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname 'CN=BandDrip Debug,O=BandDrip,C=XX' \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storetype JKS
+          fi
+
+          rm -f /tmp/banddrip-debug.p12
+          keytool -importkeystore \
+            -srckeystore "$HOME/.android/debug.keystore" \
+            -srcstorepass android \
+            -srcalias androiddebugkey \
+            -srckeypass android \
+            -destkeystore /tmp/banddrip-debug.p12 \
+            -deststoretype PKCS12 \
+            -deststorepass android \
+            -destkeypass android \
+            -noprompt
+
+          openssl pkcs12 \
+            -in /tmp/banddrip-debug.p12 \
+            -passin pass:android \
+            -nodes -nocerts \
+            -out ../band/sign/private.pem
+          openssl pkcs12 \
+            -in /tmp/banddrip-debug.p12 \
+            -passin pass:android \
+            -clcerts -nokeys \
+            -out ../band/sign/certificate.pem
+
+          echo 'Shared debug signing certificate:'
+          openssl x509 -in ../band/sign/certificate.pem -noout -subject -fingerprint -sha256
+
+      - name: Build matching signed Vela RPK
+        run: |
+          cd ../band
+          npm install
+          node tools/assert-mock-off.mjs
+          npm test
+          npm run release
+
+      - name: Bundle wearable RPK and Mi Fitness launcher
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/bundled
+
+          RPK_FILE=$(find ../band/dist -name '*.rpk' -type f | sort | head -n 1)
+          test -n "$RPK_FILE"
+          cp "$RPK_FILE" app/src/main/assets/bundled/banddrip.rpk
+
+          PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -n 1)/android.jar
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          rm -rf /tmp/banddrip-launch-classes /tmp/banddrip-launch-dex
+          mkdir -p /tmp/banddrip-launch-classes /tmp/banddrip-launch-dex
+          javac -source 8 -target 8 -bootclasspath "$PLATFORM" \
+            ../../tools/installer/LaunchFragment.java \
+            -d /tmp/banddrip-launch-classes
+          "$BUILD_TOOLS/d8" \
+            /tmp/banddrip-launch-classes/LaunchFragment.class \
+            --output /tmp/banddrip-launch-dex
+          cp /tmp/banddrip-launch-dex/classes.dex app/src/main/assets/bundled/launch.dex
+
+          sha256sum app/src/main/assets/bundled/banddrip.rpk
+          sha256sum app/src/main/assets/bundled/launch.dex
+
+      - name: Set up Gradle 9.5
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+
+      - name: Run unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Verify shared APK signing identity
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          APK=app/build/outputs/apk/debug/app-debug.apk
+
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
+
+          EXPECTED=$(openssl x509 -in ../band/sign/certificate.pem -outform DER | sha256sum | awk '{print $1}')
+          ACTUAL=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" \
+            | sed -n 's/^.*certificate SHA-256 digest: //p' \
+            | tr -d ':' \
+            | tr 'A-F' 'a-f' \
+            | head -n 1)
+
+          echo "Expected shared cert SHA-256: $EXPECTED"
+          echo "Android APK cert SHA-256:    $ACTUAL"
+          test -n "$ACTUAL"
+          test "$EXPECTED" = "$ACTUAL"
+
+      - name: Verify all-in-one APK payload
+        run: |
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep 'assets/bundled/banddrip.rpk'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep 'assets/bundled/launch.dex'
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: banddrip-all-in-one-debug-apk
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

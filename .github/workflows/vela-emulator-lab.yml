@@ -1,0 +1,100 @@
+name: Experimental Vela emulator lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      skin:
+        description: 'Known Xiaomi Vela full-emulator skin'
+        required: true
+        default: 'xiaomi_band_pro'
+        type: choice
+        options:
+          - xiaomi_band_pro
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BANDDRIP_VVD_NAME: BandDrip_ProLab
+      BANDDRIP_VELA_SKIN: ${{ inputs.skin || 'xiaomi_band_pro' }}
+      BANDDRIP_VELA_IMAGE: vela-miwear-watch-5.0
+      EMU_SERIAL: emulator-5554
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Enable KVM when exposed by runner
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Install emulator host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb adb lsof python3-pil libpulse0 libgl1 libnss3 libxkbcommon0 \
+            libxcomposite1 libxcursor1 libxi6 libxtst6 libxrandr2 \
+            libasound2t64 libdbus-1-3 libfontconfig1
+      - name: Install Xiaomi Vela + gRPC tooling
+        run: |
+          npm install --no-save \
+            aiot-toolkit@2.0.5 @aiot-toolkit/emulator \
+            @grpc/grpc-js @grpc/proto-loader google-proto-files
+      - name: Download Vela emulator environment
+        run: npx aiot initEmulatorEnv
+      - name: Create virtual Xiaomi band
+        run: node tools/vela-emulator/create-vvd.cjs
+      - name: Build BandDrip RPK before boot
+        working-directory: apps/band
+        run: |
+          npm install
+          npm test
+          npm run build
+      - name: Start virtual band under Xvfb
+        run: |
+          adb start-server
+          nohup xvfb-run -a node tools/vela-emulator/start-vvd.cjs > vela-emulator.log 2>&1 &
+          echo $! > vela-emulator.pid
+      - name: Wait for emulator ADB
+        run: |
+          for i in $(seq 1 150); do
+            if adb devices | grep -q "${EMU_SERIAL}.*device"; then adb devices; exit 0; fi
+            sleep 2
+          done
+          echo 'Vela emulator did not expose ADB in time.' >&2
+          exit 1
+      - name: Deploy and launch BandDrip directly in Vela
+        run: bash tools/vela-emulator/deploy-rpk.sh apps/band
+      - name: Capture BandDrip through emulator gRPC
+        continue-on-error: true
+        run: |
+          mkdir -p emulator-evidence
+          node tools/vela-emulator/capture-grpc.cjs emulator-evidence/screen-grpc.png
+      - name: Raw framebuffer diagnostic fallback
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 tools/vela-emulator/capture-framebuffer.py \
+            --serial "$EMU_SERIAL" --width 336 --height 480 \
+            --output-dir emulator-evidence
+      - name: Capture virtual-device evidence
+        if: always()
+        run: |
+          mkdir -p emulator-evidence
+          adb devices > emulator-evidence/adb-devices.txt 2>&1 || true
+          adb -s "$EMU_SERIAL" shell "ls /data/quickapp/app/org.banddrip.app" > emulator-evidence/app-tree.txt 2>&1 || true
+          adb -s "$EMU_SERIAL" shell "ps" > emulator-evidence/guest-processes.txt 2>&1 || true
+          lsof -nP -iTCP -sTCP:LISTEN > emulator-evidence/listening-ports.txt 2>&1 || true
+          ps aux > emulator-evidence/host-processes.txt 2>&1 || true
+          cp vela-emulator.log emulator-evidence/vela-emulator.log 2>/dev/null || true
+          find apps/band/dist -type f -name '*.rpk' -exec cp {} emulator-evidence/ \; 2>/dev/null || true
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-emulator-evidence-${{ env.BANDDRIP_VELA_SKIN }}
+          path: emulator-evidence
+          if-no-files-found: error

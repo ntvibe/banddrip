@@ -1,0 +1,81 @@
+name: Publish BandDrip MVP release
+
+on:
+  push:
+    branches:
+      - scaffold/public-mvp
+    paths:
+      - '.github/workflows/publish-mvp-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download latest verified Android artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/android
+          gh run download 32577943869 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name banddrip-all-in-one-debug-apk \
+            --dir dist/android
+
+      - name: Download latest verified Vela artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/vela
+          gh run download 32577943787 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name banddrip-vela-debug-rpk \
+            --dir dist/vela
+
+      - name: Prepare stable filenames
+        run: |
+          echo 'Downloaded files:'
+          find dist -type f -maxdepth 4 -print
+          APK="$(find dist/android -type f -name '*.apk' | head -n 1)"
+          RPK="$(find dist/vela -type f -name '*.rpk' | head -n 1)"
+          test -n "$APK"
+          test -n "$RPK"
+          cp "$APK" dist/BandDrip-debug.apk
+          cp "$RPK" dist/BandDrip-debug.rpk
+          sha256sum dist/BandDrip-debug.apk dist/BandDrip-debug.rpk > dist/SHA256SUMS.txt
+
+      - name: Publish v0.1.0-mvp prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.1.0-mvp --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload v0.1.0-mvp \
+              dist/BandDrip-debug.apk \
+              dist/BandDrip-debug.rpk \
+              dist/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create v0.1.0-mvp \
+              dist/BandDrip-debug.apk \
+              dist/BandDrip-debug.rpk \
+              dist/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --target 355fc2717781ede38d12c24ebf79d2168162f1b1 \
+              --title 'BandDrip v0.1.0 MVP' \
+              --prerelease \
+              --notes 'First hardware-free BandDrip MVP build. Includes the Android all-in-one debug APK and Xiaomi Vela debug RPK from the verified green CI build at commit 355fc27. Physical Xiaomi Smart Band 10 installation and transport remain experimental until tested on real hardware.'
+          fi
+
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v0.1.0-mvp --repo "$GITHUB_REPOSITORY" --json url,assets
