@@ -56,7 +56,7 @@ jobs:
           java -Xmx3g -jar work/apkeditor.jar m -i work/splits -o work/merged.apk
       - name: Add phone-accessible installer activity
         run: |
-          java -Xmx3g -jar work/apktool.jar d --only-manifest -s work/merged.apk -o work/decoded
+          java -Xmx3g -jar work/apktool.jar d -s work/merged.apk -o work/decoded
           python experiments/pro-nfc-mifitness-apk/patch.py work/decoded
           java -Xmx3g -jar work/apktool.jar b work/decoded -o work/unsigned.apk
       - name: Verify preserved code and native libraries
@@ -73,6 +73,7 @@ jobs:
                           assert z.read(name) == result.read(name), f'Original payload changed: {name}'
                           checked += 1
           assert checked > 12 and 'classes13.dex' in result.namelist()
+          assert 'AndroidManifest.xml' in result.namelist()
           assert b'Lorg/banddrip/mifitness/InstallerActivity;' in result.read('classes13.dex')
           assert any(n.startswith('lib/arm64-v8a/') for n in result.namelist())
           Path('artifact/VERIFICATION.txt').write_text(f'{checked} original code/library payloads preserved; launcher DEX present.\nRuntime and band installation NOT tested.\n')
