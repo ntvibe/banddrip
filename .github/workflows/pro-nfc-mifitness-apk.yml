@@ -44,14 +44,14 @@ jobs:
         run: |
           signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           for apk in work/splits/*.apk; do
-            "$signer" verify --print-certs "$apk" > "$apk.certs"
+            "$signer" verify --print-certs "$apk" | tee "$apk.certs"
           done
           python - <<'PY'
           import re
           from pathlib import Path
-          certs = [re.search(r'Signer #1 certificate SHA-256 digest: (\w+)', p.read_text()).group(1) for p in Path('work/splits').glob('*.certs')]
-          assert len(certs) == 4 and len(set(certs)) == 1, 'Split signer mismatch'
-          Path('artifact/UPSTREAM-CERT-SHA256.txt').write_text(certs[0]+'\n')
+          certs = [tuple(sorted(set(re.findall(r'Signer[^\n]*certificate SHA-256 digest: ([0-9a-fA-F]{64})', p.read_text())))) for p in Path('work/splits').glob('*.certs')]
+          assert len(certs) == 4 and all(certs) and len(set(certs)) == 1, 'Split signer mismatch'
+          Path('artifact/UPSTREAM-CERT-SHA256.txt').write_text('\n'.join(certs[0])+'\n')
           PY
           java -Xmx3g -jar work/apkeditor.jar m -i work/splits -o work/merged.apk
       - name: Add phone-accessible installer activity
