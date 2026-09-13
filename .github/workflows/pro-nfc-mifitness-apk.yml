@@ -1,0 +1,102 @@
+name: Modified Mi Fitness BandDrip APK
+on:
+  push:
+    branches: ['hardware/pro-nfc-mifitness-apk']
+    paths: ['experiments/pro-nfc-mifitness-apk/**', '.github/workflows/pro-nfc-mifitness-apk.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Download pinned tools and APK splits
+        run: |
+          mkdir -p work/splits artifact
+          curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar -o work/apktool.jar
+          curl --fail --location --retry 3 https://github.com/REAndroid/APKEditor/releases/download/V1.4.9/APKEditor-1.4.9.jar -o work/apkeditor.jar
+          python - <<'PY'
+          import concurrent.futures, subprocess, hashlib
+          from pathlib import Path
+          files = [('base', '68287a37968be4f98f92efc485fc1583', ''), ('arm64', 'ea32085afa61551eb803536819403704', '-config-arm64-v8a'), ('mdpi', 'b2e58a2c3a5cc007e80f76c365aa6d6a', '-config-mdpi'), ('en', '5e6fb2a28434c2bb4c2f700c634f9eca', '-config-en')]
+          def download(item):
+              name, digest, suffix = item
+              store = 'aptoide-web' if name == 'base' else 'apps'
+              url = f'https://pool.apk.aptoide.com/{store}/com-xiaomi-wearable-357000-75852908-{digest}{suffix}.apk'
+              path = Path(f'work/splits/{name}.apk')
+              subprocess.run(['curl','--fail','--location','--retry','3','--max-time','240',url,'-o',str(path)], check=True)
+              assert hashlib.md5(path.read_bytes()).hexdigest() == digest, name
+              return f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path}\n'
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              records = list(pool.map(download, files))
+          assert records[0].startswith('8797cf6993c07a7e1362d21f7b2c23a188922c1ded3bc4304d8fe6ecf9bbbc50')
+          Path('artifact/INPUT-SHA256SUMS').write_text(''.join(records))
+          PY
+          sdkmanager 'build-tools;35.0.0'
+      - name: Verify original signatures and merge standalone ARM64 package
+        run: |
+          signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          for apk in work/splits/*.apk; do
+            "$signer" verify --print-certs "$apk" > "$apk.certs"
+          done
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          certs = [re.search(r'Signer #1 certificate SHA-256 digest: (\w+)', p.read_text()).group(1) for p in Path('work/splits').glob('*.certs')]
+          assert len(certs) == 4 and len(set(certs)) == 1, 'Split signer mismatch'
+          Path('artifact/UPSTREAM-CERT-SHA256.txt').write_text(certs[0]+'\n')
+          PY
+          java -Xmx3g -jar work/apkeditor.jar m -i work/splits -o work/merged.apk
+      - name: Add phone-accessible installer activity
+        run: |
+          java -Xmx3g -jar work/apktool.jar d --only-manifest -s work/merged.apk -o work/decoded
+          python experiments/pro-nfc-mifitness-apk/patch.py work/decoded
+          java -Xmx3g -jar work/apktool.jar b work/decoded -o work/unsigned.apk
+      - name: Verify preserved code and native libraries
+        run: |
+          python - <<'PY'
+          import zipfile, hashlib
+          from pathlib import Path
+          result = zipfile.ZipFile('work/unsigned.apk')
+          checked = 0
+          for source in Path('work/splits').glob('*.apk'):
+              with zipfile.ZipFile(source) as z:
+                  for name in z.namelist():
+                      if (name.startswith('classes') and name.endswith('.dex')) or name.startswith('lib/') and not name.endswith('/'):
+                          assert z.read(name) == result.read(name), f'Original payload changed: {name}'
+                          checked += 1
+          assert checked > 12 and 'classes13.dex' in result.namelist()
+          assert b'Lorg/banddrip/mifitness/InstallerActivity;' in result.read('classes13.dex')
+          assert any(n.startswith('lib/arm64-v8a/') for n in result.namelist())
+          Path('artifact/VERIFICATION.txt').write_text(f'{checked} original code/library payloads preserved; launcher DEX present.\nRuntime and band installation NOT tested.\n')
+          PY
+      - name: Sign and verify modified APK
+        run: |
+          sdk="$ANDROID_HOME/build-tools/35.0.0"
+          keytool -genkeypair -keystore work/test.jks -storepass android -keypass android -alias banddrip -dname 'CN=BandDrip Personal Test' -keyalg RSA -keysize 2048 -validity 3650
+          "$sdk/zipalign" -P 16 -f 4 work/unsigned.apk work/aligned.apk
+          "$sdk/apksigner" sign --ks work/test.jks --ks-key-alias banddrip --ks-pass pass:android --key-pass pass:android --out artifact/MiFitness-BandDrip-Installer-P1-arm64.apk work/aligned.apk
+          "$sdk/apksigner" verify --verbose --print-certs artifact/MiFitness-BandDrip-Installer-P1-arm64.apk > artifact/SIGNATURE.txt
+          "$sdk/zipalign" -c -P 16 4 artifact/MiFitness-BandDrip-Installer-P1-arm64.apk
+          "$sdk/aapt" dump xmltree artifact/MiFitness-BandDrip-Installer-P1-arm64.apk AndroidManifest.xml > artifact/MANIFEST.txt
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('artifact/MANIFEST.txt').read_text()
+          assert 'org.banddrip.mifitness.InstallerActivity' in text
+          assert 'BandDrip Installer' in text
+          PY
+          cp experiments/pro-nfc-mifitness-apk/README.md artifact/
+          sha256sum artifact/*.apk > artifact/APK-SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiFitness-BandDrip-Installer-P1-APK
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
