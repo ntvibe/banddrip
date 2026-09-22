@@ -216,8 +216,6 @@ jobs:
               int launcher_rc = app_launcher_add(APP_ID);
               syslog(LOG_WARN, "%s launcher=%d\n", LOG_TAG, launcher_rc);
 
-              /* Force the currently visible launcher layout to pick up the record. */
-              launcher_page_main_update_layout();
           }
 
           static void start_timer_cb(lv_timer_t *timer)
