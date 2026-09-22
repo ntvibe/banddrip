@@ -12,6 +12,10 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
+      - name: Install ARM binutils for disassembly
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-arm-none-eabi
       - uses: actions/checkout@v4
         with:
           ref: test/nivo-xiaomi-sender
