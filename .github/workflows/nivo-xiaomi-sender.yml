@@ -1,0 +1,236 @@
+name: Nivo Xiaomi Sender APK
+
+on:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-xiaomi-sender.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Clone Xiaomi wearable SDK sample
+        run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git sender
+
+      - name: Convert sample into minimal Nivo sender
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("sender/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          p.write_text(s)
+          PY
+
+          cat > sender/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo Transport Sender"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > sender/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:gravity="center_horizontal"
+              android:padding="28dp">
+
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO TRANSPORT"
+                  android:textStyle="bold"
+                  android:textSize="26sp"
+                  android:layout_marginTop="48dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Initializing Xiaomi connection…"
+                  android:textSize="16sp"
+                  android:gravity="center"
+                  android:layout_marginTop="24dp"
+                  android:layout_marginBottom="32dp"/>
+
+              <Button
+                  android:id="@+id/send111"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 111"
+                  android:textSize="20sp"/>
+
+              <Button
+                  android:id="@+id/send222"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 222"
+                  android:textSize="20sp"
+                  android:layout_marginTop="16dp"/>
+
+              <Button
+                  android:id="@+id/send333"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 333"
+                  android:textSize="20sp"
+                  android:layout_marginTop="16dp"/>
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Each button launches com.application.watch.watchdrip on the band, then sends one UTF-8 message: NIVO|111 / 222 / 333."
+                  android:textSize="14sp"
+                  android:gravity="center"
+                  android:layout_marginTop="32dp"/>
+          </LinearLayout>
+          XML
+
+          cat > sender/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.widget.Button;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+
+          import java.nio.charset.StandardCharsets;
+
+          import test.invoke.sdk.XiaomiWatchHelper;
+
+          public class MainActivity extends AppCompatActivity {
+              private XiaomiWatchHelper helper;
+              private TextView status;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  status = findViewById(R.id.status);
+                  Button send111 = findViewById(R.id.send111);
+                  Button send222 = findViewById(R.id.send222);
+                  Button send333 = findViewById(R.id.send333);
+
+                  send111.setEnabled(false);
+                  send222.setEnabled(false);
+                  send333.setEnabled(false);
+
+                  helper = XiaomiWatchHelper.getInstance(this);
+                  helper.setReceiver((id, message) ->
+                      runOnUiThread(() -> status.setText(
+                          "Band replied: " + new String(message, StandardCharsets.UTF_8)
+                      ))
+                  );
+
+                  try {
+                      helper.registerMessageReceiver();
+                      handler.postDelayed(() -> {
+                          status.setText("Ready — press 111, 222 or 333");
+                          send111.setEnabled(true);
+                          send222.setEnabled(true);
+                          send333.setEnabled(true);
+                      }, 1800);
+                  } catch (Throwable t) {
+                      status.setText("Init failed: " + t.getClass().getSimpleName());
+                  }
+
+                  send111.setOnClickListener(v -> sendValue("111"));
+                  send222.setOnClickListener(v -> sendValue("222"));
+                  send333.setOnClickListener(v -> sendValue("333"));
+              }
+
+              private void sendValue(String value) {
+                  final String payload = "NIVO|" + value;
+                  status.setText("Launching band app…");
+
+                  helper.launchApp("com.application.watch.watchdrip", launchStatus -> {
+                      runOnUiThread(() -> {
+                          if (!launchStatus.isSuccess()) {
+                              status.setText("Launch failed — Xiaomi status " + launchStatus.getStatusCode());
+                              return;
+                          }
+
+                          status.setText("Band app launched; sending " + payload + "…");
+                          handler.postDelayed(() ->
+                              helper.sendMessageToWear(payload, sendStatus ->
+                                  runOnUiThread(() -> {
+                                      if (sendStatus.isSuccess()) {
+                                          status.setText("Sent " + payload + " ✓  Check MESSAGE EVENTS on band.");
+                                      } else {
+                                          status.setText("Send failed — Xiaomi status " + sendStatus.getStatusCode());
+                                      }
+                                  })
+                              ), 700);
+                      });
+                  });
+              }
+
+              @Override
+              protected void onDestroy() {
+                  try {
+                      if (helper != null) helper.unRegisterWatchHelper();
+                  } catch (Throwable ignored) {}
+                  super.onDestroy();
+              }
+          }
+          JAVA
+
+      - name: Build debug APK
+        working-directory: sender
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Rename output
+        run: |
+          cp sender/app/build/outputs/apk/debug/app-debug.apk Nivo_Transport_Sender.apk
+          sha256sum Nivo_Transport_Sender.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_Transport_Sender
+          path: Nivo_Transport_Sender.apk
+          if-no-files-found: error
