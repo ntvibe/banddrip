@@ -1,4 +1,4 @@
-name: Nivo Xiaomi Transport V2
+name: Nivo Xiaomi Direct Sender V21
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
       - name: Clone Xiaomi wearable SDK sample
         run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git sender
 
-      - name: Convert sample into direct-send Nivo sender
+      - name: Convert sample into direct sender for existing Nivo Transport app
         shell: bash
         run: |
           set -euo pipefail
@@ -44,7 +44,9 @@ jobs:
               end = s.find("    defaultConfig {", start)
               s = s[:start] + s[end:]
           s = s.replace("            signingConfig signingConfigs.release\n", "")
-          s = s.replace('applicationId "com.application.watch.watchdrip"', 'applicationId "com.nivo.transportsender"')
+          # IMPORTANT: keep the original package identity so Xiaomi routes
+          # messages to the already-installed Nivo Transport band app.
+          s = s.replace('versionName "1.0"', 'versionName "2.1"')
           p.write_text(s)
           PY
 
@@ -54,7 +56,7 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:icon="@mipmap/ic_launcher"
-                  android:label="Nivo Transport Sender V2"
+                  android:label="Nivo Direct Sender 2.1"
                   android:roundIcon="@mipmap/ic_launcher_round"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.WatchdripXiaomi">
@@ -82,7 +84,7 @@ jobs:
               <TextView
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="NIVO TRANSPORT V2"
+                  android:text="NIVO DIRECT 2.1"
                   android:textStyle="bold"
                   android:textSize="25sp"
                   android:layout_marginTop="42dp"/>
@@ -101,29 +103,29 @@ jobs:
                   android:id="@+id/send111"
                   android:layout_width="match_parent"
                   android:layout_height="64dp"
-                  android:text="DIRECT SEND 111"
-                  android:textSize="19sp"/>
+                  android:text="SEND 111"
+                  android:textSize="20sp"/>
 
               <Button
                   android:id="@+id/send222"
                   android:layout_width="match_parent"
                   android:layout_height="64dp"
-                  android:text="DIRECT SEND 222"
-                  android:textSize="19sp"
+                  android:text="SEND 222"
+                  android:textSize="20sp"
                   android:layout_marginTop="16dp"/>
 
               <Button
                   android:id="@+id/send333"
                   android:layout_width="match_parent"
                   android:layout_height="64dp"
-                  android:text="DIRECT SEND 333"
-                  android:textSize="19sp"
+                  android:text="SEND 333"
+                  android:textSize="20sp"
                   android:layout_marginTop="16dp"/>
 
               <TextView
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:text="Messages are sent immediately. Launch is attempted separately and never blocks sending. Target package on both phone and band: com.nivo.transportsender"
+                  android:text="Uses the same package identity as the existing Nivo Transport band app. Sending does NOT wait for automatic launch."
                   android:textSize="14sp"
                   android:gravity="center"
                   android:layout_marginTop="28dp"/>
@@ -146,7 +148,7 @@ jobs:
           import test.invoke.sdk.XiaomiWatchHelper;
 
           public class MainActivity extends AppCompatActivity {
-              private static final String BAND_PACKAGE = "com.nivo.transportsender";
+              private static final String BAND_PACKAGE = "com.application.watch.watchdrip";
 
               private XiaomiWatchHelper helper;
               private TextView status;
@@ -177,7 +179,7 @@ jobs:
                   try {
                       helper.registerMessageReceiver();
                       handler.postDelayed(() -> {
-                          status.setText("Ready. Keep Nivo Transport V2 open on the band, then send.");
+                          status.setText("Ready. Open Nivo Transport on band, then press a button.");
                           send111.setEnabled(true);
                           send222.setEnabled(true);
                           send333.setEnabled(true);
@@ -194,38 +196,29 @@ jobs:
               private void sendValue(String value) {
                   final int seq = ++sendSequence;
                   final String payload = "NIVO|" + value;
-                  status.setText("Sending " + payload + " directly…");
+                  status.setText("Direct sending " + payload + "…");
 
-                  // Critical V2 change: message send is NOT gated by launchWearApp().
                   helper.sendMessageToWear(payload, sendStatus ->
                       runOnUiThread(() -> {
                           if (seq != sendSequence) return;
                           if (sendStatus.isSuccess()) {
-                              status.setText("SEND callback SUCCESS: " + payload + " ✓  Check band counter.");
+                              status.setText("SEND SUCCESS: " + payload + " ✓  Check MESSAGE EVENTS.");
                           } else {
-                              status.setText("SEND callback FAILED: " + payload);
+                              status.setText("SEND FAILED: " + payload);
                           }
                       })
                   );
 
-                  // Launch is diagnostic only. Xiaomi may never return this callback
-                  // for our native NuttX app, so it must never block message delivery.
+                  // Diagnostic only. Never gate sending on this callback.
                   handler.postDelayed(() -> {
                       try {
-                          helper.launchApp(BAND_PACKAGE, launchStatus ->
-                              runOnUiThread(() -> {
-                                  if (seq != sendSequence) return;
-                                  if (launchStatus.isSuccess()) {
-                                      status.setText("Send requested; LAUNCH callback SUCCESS.");
-                                  }
-                              })
-                          );
+                          helper.launchApp(BAND_PACKAGE, launchStatus -> {});
                       } catch (Throwable ignored) {}
                   }, 120);
 
                   handler.postDelayed(() -> {
-                      if (seq == sendSequence && status.getText().toString().startsWith("Sending")) {
-                          status.setText("No send callback yet — still check MESSAGE EVENTS on band.");
+                      if (seq == sendSequence && status.getText().toString().startsWith("Direct sending")) {
+                          status.setText("No send callback yet — still check band MESSAGE EVENTS.");
                       }
                   }, 2500);
               }
@@ -246,72 +239,30 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon
 
-      - name: Create matching band installer V2
-        shell: bash
+      - name: Prepare output
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import base64, io, zipfile
+          cp sender/app/build/outputs/apk/debug/app-debug.apk Nivo_Direct_Sender_2.1.apk
+          sha256sum Nivo_Direct_Sender_2.1.apk
 
-          src_b64 = Path("experiments/nivo-transport/Nivo_Transport_MB10Pro_3.201.016_UPLOAD.zip.b64")
-          original = base64.b64decode(src_b64.read_text().strip())
-
-          zin = zipfile.ZipFile(io.BytesIO(original), "r")
-          files = {name: zin.read(name) for name in zin.namelist()}
-          zin.close()
-
-          target = "nivo_transport.bin"
-          data = files[target]
-
-          old = b"com.application.watch.watchdrip"
-          new = b"com.nivo.transportsender"
-          count = data.count(old)
-          if count < 1:
-              raise SystemExit("Expected old band package string not found in nivo_transport.bin")
-
-          replacement = new + (b"\x00" * (len(old) - len(new)))
-          data = data.replace(old, replacement)
-          files[target] = data
-
-          out = io.BytesIO()
-          with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-              for name, blob in files.items():
-                  zout.writestr(name, blob)
-
-          Path("Nivo_Transport_V2_MB10Pro_3.201.016_UPLOAD.zip").write_bytes(out.getvalue())
-          print("Patched package-name occurrences:", count)
-          print("Old:", old.decode())
-          print("New:", new.decode())
-          PY
-
-      - name: Prepare outputs
-        run: |
-          cp sender/app/build/outputs/apk/debug/app-debug.apk Nivo_Transport_Sender_V2.apk
-          sha256sum Nivo_Transport_Sender_V2.apk Nivo_Transport_V2_MB10Pro_3.201.016_UPLOAD.zip
-
-      - name: Upload V2 test kit
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nivo_Transport_V2_Test_Kit
-          path: |
-            Nivo_Transport_Sender_V2.apk
-            Nivo_Transport_V2_MB10Pro_3.201.016_UPLOAD.zip
+          name: Nivo_Direct_Sender_2.1
+          path: Nivo_Direct_Sender_2.1.apk
           if-no-files-found: error
 
-      - name: Publish V2 binaries to test branch
+      - name: Publish APK to test branch
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p test-artifacts/nivo-transport-v2
-          cp Nivo_Transport_Sender_V2.apk test-artifacts/nivo-transport-v2/
-          cp Nivo_Transport_V2_MB10Pro_3.201.016_UPLOAD.zip test-artifacts/nivo-transport-v2/
+          mkdir -p test-artifacts/nivo-direct-v21
+          cp Nivo_Direct_Sender_2.1.apk test-artifacts/nivo-direct-v21/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f test-artifacts/nivo-transport-v2/
+          git add -f test-artifacts/nivo-direct-v21/Nivo_Direct_Sender_2.1.apk
           if git diff --cached --quiet; then
-            echo "No binary changes to publish."
+            echo "No changes."
           else
-            git commit -m "test: publish Nivo transport V2 kit"
+            git commit -m "test: publish Nivo direct sender 2.1"
             git push origin HEAD:test/nivo-xiaomi-sender
           fi
