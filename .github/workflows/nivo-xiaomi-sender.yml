@@ -1,4 +1,4 @@
-name: Nivo Xiaomi Direct Sender V21
+name: Nivo Xiaomi Status Diagnostic
 
 on:
   push:
@@ -15,13 +15,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout test branch
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: test/nivo-xiaomi-sender
           fetch-depth: 0
 
-      - name: Set up Java 17
+      - name: Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -30,11 +30,10 @@ jobs:
       - name: Clone Xiaomi wearable SDK sample
         run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git sender
 
-      - name: Convert sample into direct sender for existing Nivo Transport app
+      - name: Build diagnostic app source
         shell: bash
         run: |
           set -euo pipefail
-
           python3 - <<'PY'
           from pathlib import Path
           p = Path("sender/app/build.gradle")
@@ -44,9 +43,7 @@ jobs:
               end = s.find("    defaultConfig {", start)
               s = s[:start] + s[end:]
           s = s.replace("            signingConfig signingConfigs.release\n", "")
-          # IMPORTANT: keep the original package identity so Xiaomi routes
-          # messages to the already-installed Nivo Transport band app.
-          s = s.replace('versionName "1.0"', 'versionName "2.1"')
+          s = s.replace('versionName "1.0"', 'versionName "2.2"')
           p.write_text(s)
           PY
 
@@ -56,7 +53,7 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:icon="@mipmap/ic_launcher"
-                  android:label="Nivo Direct Sender 2.1"
+                  android:label="Nivo Xiaomi Diagnostic"
                   android:roundIcon="@mipmap/ic_launcher_round"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.WatchdripXiaomi">
@@ -74,195 +71,205 @@ jobs:
 
           cat > sender/app/src/main/res/layout/activity_main.xml <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
-              android:layout_height="match_parent"
-              android:orientation="vertical"
-              android:gravity="center_horizontal"
-              android:padding="28dp">
-
-              <TextView
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:text="NIVO DIRECT 2.1"
-                  android:textStyle="bold"
-                  android:textSize="25sp"
-                  android:layout_marginTop="42dp"/>
-
-              <TextView
-                  android:id="@+id/status"
+              android:layout_height="match_parent">
+              <LinearLayout
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:text="Connecting to Xiaomi wearable service…"
-                  android:textSize="16sp"
-                  android:gravity="center"
-                  android:layout_marginTop="22dp"
-                  android:layout_marginBottom="28dp"/>
+                  android:orientation="vertical"
+                  android:padding="24dp">
 
-              <Button
-                  android:id="@+id/send111"
-                  android:layout_width="match_parent"
-                  android:layout_height="64dp"
-                  android:text="SEND 111"
-                  android:textSize="20sp"/>
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="NIVO XIAOMI DIAGNOSTIC"
+                      android:textStyle="bold"
+                      android:textSize="24sp"
+                      android:gravity="center"
+                      android:layout_marginTop="30dp"/>
 
-              <Button
-                  android:id="@+id/send222"
-                  android:layout_width="match_parent"
-                  android:layout_height="64dp"
-                  android:text="SEND 222"
-                  android:textSize="20sp"
-                  android:layout_marginTop="16dp"/>
+                  <Button
+                      android:id="@+id/diagnose"
+                      android:layout_width="match_parent"
+                      android:layout_height="64dp"
+                      android:text="RUN DIAGNOSTIC"
+                      android:textSize="18sp"
+                      android:layout_marginTop="28dp"/>
 
-              <Button
-                  android:id="@+id/send333"
-                  android:layout_width="match_parent"
-                  android:layout_height="64dp"
-                  android:text="SEND 333"
-                  android:textSize="20sp"
-                  android:layout_marginTop="16dp"/>
+                  <Button
+                      android:id="@+id/send111"
+                      android:layout_width="match_parent"
+                      android:layout_height="64dp"
+                      android:text="DIRECT SEND 111"
+                      android:textSize="18sp"
+                      android:layout_marginTop="14dp"/>
 
-              <TextView
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:text="Uses the same package identity as the existing Nivo Transport band app. Sending does NOT wait for automatic launch."
-                  android:textSize="14sp"
-                  android:gravity="center"
-                  android:layout_marginTop="28dp"/>
-          </LinearLayout>
+                  <TextView
+                      android:id="@+id/log"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="Press RUN DIAGNOSTIC."
+                      android:textIsSelectable="true"
+                      android:textSize="16sp"
+                      android:fontFamily="monospace"
+                      android:layout_marginTop="24dp"/>
+              </LinearLayout>
+          </ScrollView>
           XML
 
           cat > sender/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
           package com.application.watch.watchdrip;
 
           import android.os.Bundle;
-          import android.os.Handler;
-          import android.os.Looper;
           import android.widget.Button;
           import android.widget.TextView;
 
           import androidx.appcompat.app.AppCompatActivity;
 
-          import java.nio.charset.StandardCharsets;
+          import com.xiaomi.xms.wearable.BaseApi;
+          import com.xiaomi.xms.wearable.Status;
+          import com.xiaomi.xms.wearable.Wearable;
+          import com.xiaomi.xms.wearable.auth.Permission;
+          import com.xiaomi.xms.wearable.node.Node;
 
-          import test.invoke.sdk.XiaomiWatchHelper;
+          import java.nio.charset.StandardCharsets;
+          import java.util.List;
 
           public class MainActivity extends AppCompatActivity {
-              private static final String BAND_PACKAGE = "com.application.watch.watchdrip";
+              private TextView log;
+              private String nodeId;
 
-              private XiaomiWatchHelper helper;
-              private TextView status;
-              private final Handler handler = new Handler(Looper.getMainLooper());
-              private int sendSequence = 0;
+              private String explain(int code) {
+                  switch (code) {
+                      case 0: return "SUCCESS";
+                      case -1: return "CANCELLED";
+                      case -2: return "TIMEOUT";
+                      case -3: return "INTERRUPTED";
+                      case -4: return "DISCONNECTED";
+                      case -5: return "PACKAGE_NOT_INSTALLED";
+                      case -6: return "SIGNATURE_VERIFY_FAILED";
+                      case -7: return "PERMISSION_DENIED";
+                      case -8: return "APP_NOT_INSTALLED";
+                      default: return "UNKNOWN";
+                  }
+              }
+
+              private void line(String s) {
+                  runOnUiThread(() -> log.append(s + "\n"));
+              }
+
+              private void statusLine(String prefix, Status status) {
+                  int code = status == null ? 999 : status.getCode();
+                  line(prefix + ": " + code + " (" + explain(code) + ")");
+              }
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   setContentView(R.layout.activity_main);
 
-                  status = findViewById(R.id.status);
+                  log = findViewById(R.id.log);
+                  Button diagnose = findViewById(R.id.diagnose);
                   Button send111 = findViewById(R.id.send111);
-                  Button send222 = findViewById(R.id.send222);
-                  Button send333 = findViewById(R.id.send333);
 
-                  send111.setEnabled(false);
-                  send222.setEnabled(false);
-                  send333.setEnabled(false);
-
-                  helper = XiaomiWatchHelper.getInstance(this);
-                  helper.setReceiver((id, message) ->
-                      runOnUiThread(() -> status.setText(
-                          "Band replied: " + new String(message, StandardCharsets.UTF_8)
-                      ))
-                  );
-
-                  try {
-                      helper.registerMessageReceiver();
-                      handler.postDelayed(() -> {
-                          status.setText("Ready. Open Nivo Transport on band, then press a button.");
-                          send111.setEnabled(true);
-                          send222.setEnabled(true);
-                          send333.setEnabled(true);
-                      }, 2200);
-                  } catch (Throwable t) {
-                      status.setText("Init failed: " + t.getClass().getSimpleName());
-                  }
-
-                  send111.setOnClickListener(v -> sendValue("111"));
-                  send222.setOnClickListener(v -> sendValue("222"));
-                  send333.setOnClickListener(v -> sendValue("333"));
+                  diagnose.setOnClickListener(v -> runDiagnostic());
+                  send111.setOnClickListener(v -> directSend());
               }
 
-              private void sendValue(String value) {
-                  final int seq = ++sendSequence;
-                  final String payload = "NIVO|" + value;
-                  status.setText("Direct sending " + payload + "…");
+              private void runDiagnostic() {
+                  log.setText("Android package: " + getPackageName() + "\n");
+                  line("Band package target: com.application.watch.watchdrip");
+                  line("Querying connected Xiaomi nodes...");
 
-                  helper.sendMessageToWear(payload, sendStatus ->
-                      runOnUiThread(() -> {
-                          if (seq != sendSequence) return;
-                          if (sendStatus.isSuccess()) {
-                              status.setText("SEND SUCCESS: " + payload + " ✓  Check MESSAGE EVENTS.");
-                          } else {
-                              status.setText("SEND FAILED: " + payload);
+                  Wearable.getNodeApi(this).getConnectedNodes(new BaseApi.Callback<List<Node>>() {
+                      @Override
+                      public void onSuccess(List<Node> nodes) {
+                          line("Connected nodes: " + nodes.size());
+                          if (nodes.isEmpty()) {
+                              line("No connected node. Stop here.");
+                              return;
                           }
-                      })
-                  );
 
-                  // Diagnostic only. Never gate sending on this callback.
-                  handler.postDelayed(() -> {
-                      try {
-                          helper.launchApp(BAND_PACKAGE, launchStatus -> {});
-                      } catch (Throwable ignored) {}
-                  }, 120);
+                          Node n = nodes.get(0);
+                          nodeId = n.getId();
+                          line("Node name: " + n.getName());
+                          line("Node id: " + nodeId);
 
-                  handler.postDelayed(() -> {
-                      if (seq == sendSequence && status.getText().toString().startsWith("Direct sending")) {
-                          status.setText("No send callback yet — still check band MESSAGE EVENTS.");
+                          Wearable.getNodeApi(MainActivity.this)
+                              .isWearAppInstalled("com.application.watch.watchdrip",
+                                  new BaseApi.Callback<Boolean>() {
+                                      @Override
+                                      public void onSuccess(Boolean installed) {
+                                          line("Band app installed: " + installed);
+                                      }
+                                      @Override
+                                      public void onFailure(Status status) {
+                                          statusLine("isWearAppInstalled FAILED", status);
+                                      }
+                                  });
+
+                          Permission[] perms = new Permission[] {
+                              Permission.DEVICE_MANAGER, Permission.NOTIFY
+                          };
+                          Wearable.getAuthApi(MainActivity.this)
+                              .checkPermissions(nodeId, perms,
+                                  new BaseApi.Callback<Boolean[]>() {
+                                      @Override
+                                      public void onSuccess(Boolean[] result) {
+                                          line("DEVICE_MANAGER permission: " +
+                                              (result.length > 0 ? result[0] : "missing"));
+                                          line("NOTIFY permission: " +
+                                              (result.length > 1 ? result[1] : "missing"));
+                                      }
+                                      @Override
+                                      public void onFailure(Status status) {
+                                          statusLine("checkPermissions FAILED", status);
+                                      }
+                                  });
+
+                          Wearable.getNodeApi(MainActivity.this)
+                              .launchWearApp(nodeId, "com.application.watch.watchdrip",
+                                  status -> statusLine("LAUNCH result", status));
                       }
-                  }, 2500);
+
+                      @Override
+                      public void onFailure(Status status) {
+                          statusLine("getConnectedNodes FAILED", status);
+                      }
+                  });
               }
 
-              @Override
-              protected void onDestroy() {
-                  try {
-                      if (helper != null) helper.unRegisterWatchHelper();
-                  } catch (Throwable ignored) {}
-                  super.onDestroy();
+              private void directSend() {
+                  if (nodeId == null) {
+                      line("SEND: run diagnostic first; no node id yet.");
+                      return;
+                  }
+                  byte[] data = "NIVO|111".getBytes(StandardCharsets.UTF_8);
+                  line("Sending NIVO|111 to node...");
+                  Wearable.getMessageApi(this).sendMessage(nodeId, data,
+                      status -> statusLine("SEND result", status));
               }
           }
           JAVA
 
-      - name: Build sender APK
+      - name: Build APK
         working-directory: sender
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon
 
-      - name: Prepare output
-        run: |
-          cp sender/app/build/outputs/apk/debug/app-debug.apk Nivo_Direct_Sender_2.1.apk
-          sha256sum Nivo_Direct_Sender_2.1.apk
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nivo_Direct_Sender_2.1
-          path: Nivo_Direct_Sender_2.1.apk
-          if-no-files-found: error
-
-      - name: Publish APK to test branch
+      - name: Publish
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p test-artifacts/nivo-direct-v21
-          cp Nivo_Direct_Sender_2.1.apk test-artifacts/nivo-direct-v21/
+          mkdir -p test-artifacts/nivo-xiaomi-diagnostic
+          cp sender/app/build/outputs/apk/debug/app-debug.apk test-artifacts/nivo-xiaomi-diagnostic/Nivo_Xiaomi_Diagnostic_2.2.apk
+          sha256sum test-artifacts/nivo-xiaomi-diagnostic/Nivo_Xiaomi_Diagnostic_2.2.apk
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f test-artifacts/nivo-direct-v21/Nivo_Direct_Sender_2.1.apk
-          if git diff --cached --quiet; then
-            echo "No changes."
-          else
-            git commit -m "test: publish Nivo direct sender 2.1"
+          git add -f test-artifacts/nivo-xiaomi-diagnostic/Nivo_Xiaomi_Diagnostic_2.2.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish Xiaomi status diagnostic 2.2"
             git push origin HEAD:test/nivo-xiaomi-sender
           fi
