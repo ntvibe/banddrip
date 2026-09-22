@@ -1,0 +1,41 @@
+name: Inspect Nivo Transport Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-repair-inspect.yml
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+
+      - name: Decode and inspect package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inspect
+          base64 -d experiments/nivo-transport/Nivo_Transport_MB10Pro_3.201.016_UPLOAD.zip.b64 > inspect/transport.zip
+          cd inspect
+          unzip -l transport.zip
+          unzip -q transport.zip -d unpacked
+          echo "=== FILES ==="
+          find unpacked -maxdepth 2 -type f -printf '%p %s bytes\n'
+          echo "=== FILE TYPE ==="
+          file unpacked/nivo_transport.bin || true
+          echo "=== FIRST 128 BYTES ==="
+          xxd -l 128 unpacked/nivo_transport.bin || true
+          echo "=== ELF MAGIC OFFSETS ==="
+          grep -abo $'\x7fELF' unpacked/nivo_transport.bin || true
+          echo "=== ZIP MAGIC OFFSETS ==="
+          grep -abo $'PK\x03\x04' unpacked/nivo_transport.bin || true
+          echo "=== LUA / MODULE STRINGS ==="
+          strings -a -n 5 unpacked/nivo_transport.bin | grep -E -i 'NIVO|transport|insmod|rmmod|3\.201\.016|\.elf|SCRIPT_PATH|com\.application|MESSAGE EVENTS|APP SIGNALS' | head -200 || true
+          echo "=== ALL INTERESTING ARCHIVE STRINGS ==="
+          strings -a -n 5 unpacked/nivo_transport.bin | grep -E -i 'main\.lua|manifest|png|lua|elf|module' | head -200 || true
