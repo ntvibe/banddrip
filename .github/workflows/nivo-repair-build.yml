@@ -1,0 +1,293 @@
+name: Build Nivo Launcher Repair
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-repair-build.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Install ARM toolchain
+        shell: bash
+        run: |
+          set -e
+          if ! command -v arm-none-eabi-gcc >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+          fi
+          arm-none-eabi-gcc --version | head -1
+
+      - name: Clone native app framework
+        run: git clone --depth 1 https://github.com/m0tral/MiWatchNativeApps.git native
+
+      - name: Write repair module
+        shell: bash
+        run: |
+          cat > native/mb10pro/nivo_repair.c <<'C'
+          #include <stdint.h>
+          #include "platform/miwear_system.h"
+          #include "common/miwear/app.h"
+          #include "common/lvgl/control.h"
+          #include "common/nuttx/syslog.h"
+          #include "common/misc/print.h"
+
+          #define LOG_TAG      "[nivo_repair]"
+          #define APP_TAG      "com.application.watch.watchdrip"
+          #define APP_ID       0xC3u
+          #define PAGE_ID      0x00u
+          #define APP_ICON     "/data/nivo_transport_logo_112.png"
+
+          static void *post_timer_id;
+          static char repair_status[96] = "NIVO REPAIR\nWAITING...";
+
+          static char *transport_app_get_name(void)
+          {
+              return "Nivo Transport";
+          }
+
+          static int transport_page_on_signal(void *page, lv_obj_t *root, void *data)
+          {
+              (void)page; (void)root; (void)data;
+              return 0;
+          }
+
+          static int transport_page_on_create(void *page, lv_obj_t *root, void *data)
+          {
+              (void)page; (void)data;
+              lv_obj_t *label = lv_label_create(root);
+              if (label != 0) {
+                  lv_label_set_text(label, repair_status);
+                  lv_obj_set_size(label, 300, 220);
+                  lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+              }
+              return 0;
+          }
+
+          static int transport_page_on_destroy(void *page, lv_obj_t *root, void *data)
+          {
+              (void)page; (void)root; (void)data;
+              return 0;
+          }
+
+          static miwear_app_t g_transport_app = {
+              .proto_app = 0,
+              .field_4   = 0,
+              .name      = APP_TAG,
+              .icon      = APP_ICON,
+              .app_id    = APP_ID,
+              .flags     = 0,
+              .field_14  = 0,
+              .field_18  = 0,
+              .app_get_name = transport_app_get_name,
+              .on_uninstall = 0,
+              .field_24  = 0,
+              .field_28  = 0,
+              .field_2C  = 0,
+              .field_30  = 0,
+              .field_34  = 0,
+              .on_signal = 0,
+              .field_3C  = 0,
+          };
+
+          static miwear_page_t g_transport_page = {
+              .parent_descriptor = 0,
+              .page_name         = "main",
+              .page_id           = PAGE_ID,
+              .app_id            = APP_ID,
+              .flags             = 0,
+              .scheduler_deadline = 0,
+              .scheduler_priority = 0,
+              .async_destroy_state = 0,
+              .lifecycle_state   = 0,
+              .layer             = 1,
+              .page_kind         = 0,
+              .activity_context  = 0,
+              .root_object       = 0,
+              .on_signal         = transport_page_on_signal,
+              .runtime_default_56 = 0,
+              .registry_prev     = 0,
+              .registry_next     = 0,
+              .runtime_parent    = 0,
+              .on_create         = transport_page_on_create,
+              .on_resume         = 0,
+              .on_newdata        = 0,
+              .on_start          = 0,
+              .on_pause          = 0,
+              .on_stop           = 0,
+              .on_destroy        = transport_page_on_destroy,
+              .on_back           = 0,
+              .on_keyevent       = 0,
+              .get_scroll_obj    = 0,
+          };
+
+          static void repair_registration(void)
+          {
+              int existing = app_lookup(APP_ID);
+              int pm_rc = -999;
+
+              if (existing == 0) {
+                  miwear_page_t *pages[] = { &g_transport_page };
+                  pm_rc = g_packagemanager_api->install(&g_transport_app, pages, 1);
+                  syslog(LOG_WARN, "%s install rc=%d\n", LOG_TAG, pm_rc);
+              } else {
+                  pm_rc = g_packagemanager_api->recover(&g_transport_app);
+                  syslog(LOG_WARN, "%s recover existing=%d rc=%d\n",
+                         LOG_TAG, existing, pm_rc);
+              }
+
+              /* Critical repair: do this regardless of lookup/install state. */
+              int launcher_rc = app_launcher_add(APP_ID);
+              syslog(LOG_WARN, "%s app_launcher_add rc=%d\n", LOG_TAG, launcher_rc);
+
+              if (existing == 0) {
+                  snprintf(repair_status, sizeof(repair_status),
+                           "NIVO REPAIR OK\nINSTALL=%d\nLAUNCHER=%d",
+                           pm_rc, launcher_rc);
+              } else {
+                  snprintf(repair_status, sizeof(repair_status),
+                           "NIVO REPAIR OK\nRECOVER=%d\nLAUNCHER=%d",
+                           pm_rc, launcher_rc);
+              }
+          }
+
+          static void timer_callback(lv_timer_t *timer)
+          {
+              (void)timer;
+              if (post_timer_id != 0) {
+                  lv_timer_delete(post_timer_id);
+                  post_timer_id = 0;
+              }
+              repair_registration();
+          }
+
+          __attribute__((constructor)) int module_initialize(void)
+          {
+              syslog(LOG_WARN, "%s module loaded\n", LOG_TAG);
+              post_timer_id = lv_timer_create(timer_callback, 500, 0);
+              syslog(LOG_WARN, "%s deferred timer=%p\n", LOG_TAG, post_timer_id);
+              return 0;
+          }
+
+          __attribute__((destructor, used)) static void module_uninitialize(void)
+          {
+              syslog(LOG_WARN, "%s module unloaded\n", LOG_TAG);
+          }
+          C
+
+      - name: Compile repair ELF for 3.201.016
+        working-directory: native
+        shell: bash
+        run: |
+          set -euo pipefail
+          arm-none-eabi-gcc             -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16             -ffreestanding -fno-common -fno-builtin -nostdlib             -fno-jump-tables -fno-stack-protector -fno-unwind-tables             -fno-asynchronous-unwind-tables -fdata-sections -fno-function-sections             -Os -I. -Imb10pro -DMB10P_FW_VERSION=3201016             -Wall -Wextra -Werror             -c mb10pro/nivo_repair.c -o nivo_repair.o
+
+          arm-none-eabi-gcc             -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16             -r -T mb10pro/mb10pro.ld             -o nivo_repair_3.201.016.elf nivo_repair.o
+
+          echo "=== REPAIR ELF ==="
+          arm-none-eabi-readelf -h nivo_repair_3.201.016.elf
+          echo "size=$(stat -c%s nivo_repair_3.201.016.elf)"
+          echo "=== UNDEFINED ==="
+          arm-none-eabi-nm -u nivo_repair_3.201.016.elf || true
+          if arm-none-eabi-nm -u nivo_repair_3.201.016.elf | grep -q '__aeabi_'; then
+            echo "Unexpected __aeabi import"
+            exit 1
+          fi
+
+      - name: Patch repair ELF into proven watchface container
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf repair_work
+          mkdir -p repair_work
+          base64 -d experiments/nivo-transport/Nivo_Transport_MB10Pro_3.201.016_UPLOAD.zip.b64 > repair_work/original.zip
+          unzip -q repair_work/original.zip -d repair_work/pkg
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          container_path = Path("repair_work/pkg/nivo_transport.bin")
+          elf_path = Path("native/nivo_repair_3.201.016.elf")
+          data = bytearray(container_path.read_bytes())
+          new = elf_path.read_bytes()
+
+          start = data.find(b"\x7fELF")
+          if start < 0:
+              raise SystemExit("Embedded ELF not found")
+
+          # Derive the original ELF logical length from its section table.
+          e_shoff = struct.unpack_from("<I", data, start+32)[0]
+          e_shentsize = struct.unpack_from("<H", data, start+46)[0]
+          e_shnum = struct.unpack_from("<H", data, start+48)[0]
+          maxend = 0
+          for n in range(e_shnum):
+              off = start + e_shoff + n*e_shentsize
+              sh_type = struct.unpack_from("<I", data, off+4)[0]
+              sh_offset = struct.unpack_from("<I", data, off+16)[0]
+              sh_size = struct.unpack_from("<I", data, off+20)[0]
+              if sh_type != 8:
+                  maxend = max(maxend, sh_offset + sh_size)
+          old_len = max(maxend, e_shoff + e_shentsize*e_shnum)
+
+          print("embedded ELF offset:", start)
+          print("original ELF slot:", old_len)
+          print("repair ELF size:", len(new))
+
+          if len(new) > old_len:
+              raise SystemExit(f"Repair ELF {len(new)} exceeds original slot {old_len}")
+
+          # Preserve the exact file slot size/container offsets.
+          patched = new + b"\x00" * (old_len - len(new))
+          data[start:start+old_len] = patched
+          container_path.write_bytes(data)
+
+          # Sanity: logo and Lua strings must still be present.
+          if b"nivo_transport_logo_112.png" not in data:
+              raise SystemExit("Logo entry lost")
+          if b"local lvgl = require" not in data:
+              raise SystemExit("Lua installer lost")
+          print("container size preserved:", len(data))
+          PY
+
+          cd repair_work/pkg
+          zip -qr ../Nivo_Transport_Launcher_Repair_MB10Pro_3.201.016_UPLOAD.zip .
+          cd ../..
+          unzip -t repair_work/Nivo_Transport_Launcher_Repair_MB10Pro_3.201.016_UPLOAD.zip
+          sha256sum repair_work/Nivo_Transport_Launcher_Repair_MB10Pro_3.201.016_UPLOAD.zip
+
+      - name: Publish repair ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/nivo-launcher-repair
+          cp repair_work/Nivo_Transport_Launcher_Repair_MB10Pro_3.201.016_UPLOAD.zip              test-artifacts/nivo-launcher-repair/
+          cp native/nivo_repair_3.201.016.elf              test-artifacts/nivo-launcher-repair/
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-launcher-repair/
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish Nivo launcher repair for 3.201.016"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_Transport_Launcher_Repair_3.201.016
+          path: |
+            repair_work/Nivo_Transport_Launcher_Repair_MB10Pro_3.201.016_UPLOAD.zip
+            native/nivo_repair_3.201.016.elf
