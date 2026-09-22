@@ -94,3 +94,13 @@ jobs:
           readelf -h inspect/embedded_transport.elf || true
           readelf -S inspect/embedded_transport.elf || true
           nm -u inspect/embedded_transport.elf || true
+
+      - name: Dump original ELF symbols and relocations
+        shell: bash
+        run: |
+          echo "=== NM ORIGINAL ==="
+          arm-none-eabi-nm -a inspect/embedded_transport.elf 2>/dev/null || nm -a inspect/embedded_transport.elf || true
+          echo "=== RELOCATIONS ==="
+          arm-none-eabi-readelf -r inspect/embedded_transport.elf 2>/dev/null || readelf -r inspect/embedded_transport.elf || true
+          echo "=== DISASM SYMBOL HEADS ==="
+          arm-none-eabi-objdump -dr inspect/embedded_transport.elf 2>/dev/null | head -1200 || true
