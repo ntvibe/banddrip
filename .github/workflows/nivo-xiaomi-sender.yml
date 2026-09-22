@@ -35,6 +35,7 @@ jobs:
               end = s.find("    defaultConfig {", start)
               s = s[:start] + s[end:]
           s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"', 'applicationId "com.nivo.transportsender"')
           p.write_text(s)
           PY
 
