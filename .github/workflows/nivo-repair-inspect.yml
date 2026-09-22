@@ -39,3 +39,58 @@ jobs:
           strings -a -n 5 unpacked/nivo_transport.bin | grep -E -i 'NIVO|transport|insmod|rmmod|3\.201\.016|\.elf|SCRIPT_PATH|com\.application|MESSAGE EVENTS|APP SIGNALS' | head -200 || true
           echo "=== ALL INTERESTING ARCHIVE STRINGS ==="
           strings -a -n 5 unpacked/nivo_transport.bin | grep -E -i 'main\.lua|manifest|png|lua|elf|module' | head -200 || true
+
+      - name: Measure embedded ELF slot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          data = Path("inspect/unpacked/nivo_transport.bin").read_bytes()
+          elf = data.find(b"\x7fELF")
+          print("ELF offset:", elf)
+
+          # scan common embedded-file signatures after ELF
+          sigs = {
+              "PNG": b"\x89PNG\r\n\x1a\n",
+              "LUA": b"local lvgl = require",
+              "ZIP": b"PK\x03\x04",
+          }
+          for name, sig in sigs.items():
+              offs=[]
+              start=0
+              while True:
+                  i=data.find(sig,start)
+                  if i<0: break
+                  offs.append(i); start=i+1
+              print(name, "offsets:", offs[:20])
+
+          if elf >= 0 and data[elf+4] == 1 and data[elf+5] == 1:
+              # ELF32 little-endian header
+              e_shoff = struct.unpack_from("<I", data, elf+32)[0]
+              e_shentsize = struct.unpack_from("<H", data, elf+46)[0]
+              e_shnum = struct.unpack_from("<H", data, elf+48)[0]
+              e_shstrndx = struct.unpack_from("<H", data, elf+50)[0]
+              print("e_shoff", hex(e_shoff), "entsize", e_shentsize, "shnum", e_shnum, "shstrndx", e_shstrndx)
+              maxend = 0
+              for n in range(e_shnum):
+                  off = elf + e_shoff + n*e_shentsize
+                  sh_type = struct.unpack_from("<I", data, off+4)[0]
+                  sh_offset = struct.unpack_from("<I", data, off+16)[0]
+                  sh_size = struct.unpack_from("<I", data, off+20)[0]
+                  if sh_type != 8:  # SHT_NOBITS
+                      maxend = max(maxend, sh_offset + sh_size)
+              table_end = e_shoff + e_shentsize*e_shnum
+              logical_end = max(maxend, table_end)
+              print("ELF logical length:", logical_end)
+              print("ELF logical absolute end:", elf + logical_end)
+              print("bytes after logical end (next 64):", data[elf+logical_end:elf+logical_end+64].hex())
+
+              Path("inspect/embedded_transport.elf").write_bytes(data[elf:elf+logical_end])
+          PY
+          file inspect/embedded_transport.elf || true
+          readelf -h inspect/embedded_transport.elf || true
+          readelf -S inspect/embedded_transport.elf || true
+          nm -u inspect/embedded_transport.elf || true
