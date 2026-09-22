@@ -185,7 +185,7 @@ jobs:
                   helper.launchApp("com.application.watch.watchdrip", launchStatus -> {
                       runOnUiThread(() -> {
                           if (!launchStatus.isSuccess()) {
-                              status.setText("Launch failed — Xiaomi status " + launchStatus.getStatusCode());
+                              status.setText("Launch failed — Xiaomi bridge rejected request");
                               return;
                           }
 
@@ -196,7 +196,7 @@ jobs:
                                       if (sendStatus.isSuccess()) {
                                           status.setText("Sent " + payload + " ✓  Check MESSAGE EVENTS on band.");
                                       } else {
-                                          status.setText("Send failed — Xiaomi status " + sendStatus.getStatusCode());
+                                          status.setText("Send failed — Xiaomi bridge rejected request");
                                       }
                                   })
                               ), 700);
