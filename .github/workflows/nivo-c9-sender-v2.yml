@@ -1,0 +1,378 @@
+name: Build Nivo C9 Sender V2 Permissions
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-c9-sender-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone Xiaomi wearable SDK sample
+        run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git sender
+
+      - name: Build permission-aware C9 sender
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("sender/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"',
+                        'applicationId "com.nivo.transport.c9"')
+          p.write_text(s)
+          PY
+
+          cat > sender/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo C9 Sender V2"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > sender/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO C9 SENDER V2"
+                  android:textStyle="bold"
+                  android:textSize="24sp"
+                  android:gravity="center"
+                  android:layout_marginTop="28dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Waiting for Xiaomi wearable service…"
+                  android:textIsSelectable="true"
+                  android:textSize="15sp"
+                  android:fontFamily="monospace"
+                  android:layout_marginTop="20dp"
+                  android:layout_marginBottom="22dp"/>
+
+              <Button
+                  android:id="@+id/init"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="REQUEST / INITIALIZE"
+                  android:textSize="18sp"/>
+
+              <Button
+                  android:id="@+id/check"
+                  android:layout_width="match_parent"
+                  android:layout_height="58dp"
+                  android:text="CHECK BAND APP"
+                  android:layout_marginTop="14dp"/>
+
+              <Button
+                  android:id="@+id/send111"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 111"
+                  android:textSize="19sp"
+                  android:layout_marginTop="22dp"/>
+
+              <Button
+                  android:id="@+id/send222"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 222"
+                  android:textSize="19sp"
+                  android:layout_marginTop="12dp"/>
+
+              <Button
+                  android:id="@+id/send333"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 333"
+                  android:textSize="19sp"
+                  android:layout_marginTop="12dp"/>
+            </LinearLayout>
+          </ScrollView>
+          XML
+
+          cat > sender/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.os.Bundle;
+          import android.widget.Button;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+
+          import com.xiaomi.xms.wearable.BaseApi;
+          import com.xiaomi.xms.wearable.Status;
+          import com.xiaomi.xms.wearable.Wearable;
+          import com.xiaomi.xms.wearable.auth.Permission;
+          import com.xiaomi.xms.wearable.node.Node;
+
+          import java.nio.charset.StandardCharsets;
+          import java.util.List;
+
+          public class MainActivity extends AppCompatActivity {
+              private static final String BAND_PACKAGE = "com.nivo.transport.c9";
+
+              private TextView status;
+              private String nodeId;
+              private boolean listenerRegistered;
+
+              private String explain(int code) {
+                  switch (code) {
+                      case 0: return "SUCCESS";
+                      case -1: return "CANCELLED";
+                      case -2: return "TIMEOUT";
+                      case -3: return "INTERRUPTED";
+                      case -4: return "DISCONNECTED";
+                      case -5: return "PACKAGE_NOT_INSTALLED";
+                      case -6: return "SIGNATURE_VERIFY_FAILED";
+                      case -7: return "PERMISSION_DENIED";
+                      case -8: return "APP_NOT_INSTALLED";
+                      default: return "UNKNOWN";
+                  }
+              }
+
+              private String describe(Status st) {
+                  if (st == null) return "null";
+                  return st.getCode() + " (" + explain(st.getCode()) + ")";
+              }
+
+              private void show(String s) {
+                  runOnUiThread(() -> status.setText(s));
+              }
+
+              private void append(String s) {
+                  runOnUiThread(() -> status.append("\n" + s));
+              }
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  status = findViewById(R.id.status);
+                  Button init = findViewById(R.id.init);
+                  Button check = findViewById(R.id.check);
+                  Button send111 = findViewById(R.id.send111);
+                  Button send222 = findViewById(R.id.send222);
+                  Button send333 = findViewById(R.id.send333);
+
+                  init.setOnClickListener(v -> initializeXiaomi());
+                  check.setOnClickListener(v -> checkBandApp());
+                  send111.setOnClickListener(v -> send("111"));
+                  send222.setOnClickListener(v -> send("222"));
+                  send333.setOnClickListener(v -> send("333"));
+
+                  discoverNode(false);
+              }
+
+              private void discoverNode(boolean continueInit) {
+                  show("Querying Xiaomi connected nodes…");
+                  Wearable.getNodeApi(this).getConnectedNodes(new BaseApi.Callback<List<Node>>() {
+                      @Override
+                      public void onSuccess(List<Node> nodes) {
+                          if (nodes.isEmpty()) {
+                              show("Connected nodes: 0");
+                              return;
+                          }
+                          Node n = nodes.get(0);
+                          nodeId = n.getId();
+                          show("Node: " + n.getName() + "\nID: " + nodeId);
+                          if (continueInit) checkAndRequestPermissions();
+                      }
+
+                      @Override
+                      public void onFailure(Status st) {
+                          show("Node query failed: " + describe(st));
+                      }
+                  });
+              }
+
+              private void initializeXiaomi() {
+                  listenerRegistered = false;
+                  if (nodeId == null) {
+                      discoverNode(true);
+                  } else {
+                      checkAndRequestPermissions();
+                  }
+              }
+
+              private void checkAndRequestPermissions() {
+                  Permission[] perms = new Permission[] {
+                      Permission.DEVICE_MANAGER,
+                      Permission.NOTIFY
+                  };
+
+                  show("Checking Xiaomi permissions…");
+
+                  Wearable.getAuthApi(this).checkPermissions(
+                      nodeId,
+                      perms,
+                      new BaseApi.Callback<Boolean[]>() {
+                          @Override
+                          public void onSuccess(Boolean[] result) {
+                              boolean dm = result.length > 0 && Boolean.TRUE.equals(result[0]);
+                              boolean notify = result.length > 1 && Boolean.TRUE.equals(result[1]);
+                              show("DEVICE_MANAGER: " + dm + "\nNOTIFY: " + notify);
+
+                              if (dm && notify) {
+                                  registerListener();
+                                  return;
+                              }
+
+                              append("Requesting missing permission(s)…");
+                              Wearable.getAuthApi(MainActivity.this).requestPermission(
+                                  nodeId,
+                                  perms,
+                                  new BaseApi.Callback<Permission[]>() {
+                                      @Override
+                                      public void onSuccess(Permission[] granted) {
+                                          show("Permission request SUCCESS\nGranted count: " +
+                                              (granted == null ? 0 : granted.length));
+                                          registerListener();
+                                      }
+
+                                      @Override
+                                      public void onFailure(Status st) {
+                                          show("Permission request FAILED: " + describe(st));
+                                      }
+                                  }
+                              );
+                          }
+
+                          @Override
+                          public void onFailure(Status st) {
+                              show("Permission check FAILED: " + describe(st));
+                          }
+                      }
+                  );
+              }
+
+              private void registerListener() {
+                  if (nodeId == null) return;
+
+                  append("Registering Xiaomi message listener…");
+                  Wearable.getMessageApi(this).addListener(
+                      nodeId,
+                      (id, message) -> append("RX phone: " +
+                          new String(message, StandardCharsets.UTF_8)),
+                      st -> {
+                          listenerRegistered = st != null && st.isSuccess();
+                          append("Listener: " + describe(st));
+                          checkBandApp();
+                      }
+                  );
+              }
+
+              private void checkBandApp() {
+                  Wearable.getNodeApi(this).isWearAppInstalled(
+                      BAND_PACKAGE,
+                      new BaseApi.Callback<Boolean>() {
+                          @Override
+                          public void onSuccess(Boolean installed) {
+                              append("Band app installed: " + installed);
+                          }
+
+                          @Override
+                          public void onFailure(Status st) {
+                              append("Band app check: " + describe(st));
+                          }
+                      }
+                  );
+              }
+
+              private void send(String value) {
+                  if (nodeId == null) {
+                      show("No node. Press REQUEST / INITIALIZE first.");
+                      return;
+                  }
+
+                  String payload = "NIVO|" + value;
+                  append("Sending " + payload + "…");
+
+                  Wearable.getMessageApi(this).sendMessage(
+                      nodeId,
+                      payload.getBytes(StandardCharsets.UTF_8),
+                      st -> append("SEND " + payload + ": " + describe(st))
+                  );
+              }
+          }
+          JAVA
+
+      - name: Build APK
+        working-directory: sender
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Publish APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/nivo-c9-sender-v2
+          cp sender/app/build/outputs/apk/debug/app-debug.apk              test-artifacts/nivo-c9-sender-v2/Nivo_C9_Sender_V2.apk
+          sha256sum test-artifacts/nivo-c9-sender-v2/Nivo_C9_Sender_V2.apk
+
+          git pull --rebase origin test/nivo-xiaomi-sender
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-c9-sender-v2/Nivo_C9_Sender_V2.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish C9 sender v2 with Xiaomi permission flow"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_C9_Sender_V2
+          path: test-artifacts/nivo-c9-sender-v2/Nivo_C9_Sender_V2.apk
