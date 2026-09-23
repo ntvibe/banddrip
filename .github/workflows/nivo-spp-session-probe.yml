@@ -1,0 +1,617 @@
+name: Build Nivo SPP Session Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-spp-session-probe.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone Android base
+        run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git probe
+
+      - name: Create SPP session probe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("probe/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"',
+                        'applicationId "com.nivo.sppsessionprobe"')
+          p.write_text(s)
+          PY
+
+          cat > probe/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo SPP Session Probe"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > probe/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO SPP SESSION PROBE"
+                  android:textStyle="bold"
+                  android:textSize="22sp"
+                  android:gravity="center"
+                  android:layout_marginTop="26dp"/>
+
+              <Spinner
+                  android:id="@+id/devices"
+                  android:layout_width="match_parent"
+                  android:layout_height="60dp"
+                  android:layout_marginTop="20dp"/>
+
+              <Button
+                  android:id="@+id/refresh"
+                  android:layout_width="match_parent"
+                  android:layout_height="56dp"
+                  android:text="REFRESH PAIRED DEVICES"/>
+
+              <Button
+                  android:id="@+id/auto"
+                  android:layout_width="match_parent"
+                  android:layout_height="68dp"
+                  android:text="AUTO NEGOTIATE SPP SESSION"
+                  android:textSize="17sp"
+                  android:layout_marginTop="16dp"/>
+
+              <Button
+                  android:id="@+id/disconnect"
+                  android:layout_width="match_parent"
+                  android:layout_height="54dp"
+                  android:text="DISCONNECT"
+                  android:layout_marginTop="12dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Grant Bluetooth permission, refresh, then Auto Negotiate."
+                  android:textIsSelectable="true"
+                  android:textSize="14sp"
+                  android:fontFamily="monospace"
+                  android:layout_marginTop="22dp"
+                  android:paddingBottom="40dp"/>
+            </LinearLayout>
+          </ScrollView>
+          XML
+
+          cat > probe/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.Manifest;
+          import android.bluetooth.BluetoothAdapter;
+          import android.bluetooth.BluetoothDevice;
+          import android.bluetooth.BluetoothSocket;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.widget.ArrayAdapter;
+          import android.widget.Spinner;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+          import androidx.core.app.ActivityCompat;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.lang.reflect.Method;
+          import java.nio.ByteBuffer;
+          import java.nio.ByteOrder;
+          import java.util.ArrayList;
+          import java.util.List;
+          import java.util.Set;
+          import java.util.UUID;
+
+          public class MainActivity extends AppCompatActivity {
+              private static final int REQ_BT = 1001;
+              private static final int RFCOMM_CHANNEL = 5;
+              private static final UUID SPP_UUID =
+                  UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+
+              private static final byte[] VERSION_QUERY = new byte[] {
+                  (byte)0xBA, (byte)0xDC, (byte)0xFE,
+                  0x00, (byte)0xC0, 0x03, 0x00,
+                  0x00, 0x00, 0x00, (byte)0xEF
+              };
+
+              // Exact Gadgetbridge SessionConfig payload:
+              // opcode 1 = START_SESSION_REQUEST
+              // version 01.00.00, max packet 0xFC00, tx window 32, timeout 10000ms
+              private static final byte[] SESSION_PAYLOAD = new byte[] {
+                  0x01,
+                  0x01, 0x03, 0x00, 0x01, 0x00, 0x00,
+                  0x02, 0x02, 0x00, 0x00, (byte)0xFC,
+                  0x03, 0x02, 0x00, 0x20, 0x00,
+                  0x04, 0x02, 0x10, 0x27
+              };
+
+              private final List<BluetoothDevice> bonded = new ArrayList<>();
+              private Spinner spinner;
+              private TextView status;
+              private BluetoothSocket socket;
+              private volatile boolean cancelled;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  spinner = findViewById(R.id.devices);
+                  status = findViewById(R.id.status);
+
+                  findViewById(R.id.refresh).setOnClickListener(v -> refreshDevices());
+                  findViewById(R.id.auto).setOnClickListener(v -> autoNegotiate());
+                  findViewById(R.id.disconnect).setOnClickListener(v -> {
+                      cancelled = true;
+                      disconnectSocket();
+                      status.setText("Disconnected.");
+                  });
+
+                  ensurePermission();
+              }
+
+              private boolean hasBtPermission() {
+                  return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                      ActivityCompat.checkSelfPermission(
+                          this, Manifest.permission.BLUETOOTH_CONNECT
+                      ) == PackageManager.PERMISSION_GRANTED;
+              }
+
+              private void ensurePermission() {
+                  if (!hasBtPermission() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      ActivityCompat.requestPermissions(
+                          this,
+                          new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                          REQ_BT
+                      );
+                  } else {
+                      refreshDevices();
+                  }
+              }
+
+              @Override
+              public void onRequestPermissionsResult(
+                  int requestCode, String[] permissions, int[] grantResults
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+                  if (requestCode == REQ_BT &&
+                      grantResults.length > 0 &&
+                      grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                      refreshDevices();
+                  } else if (requestCode == REQ_BT) {
+                      status.setText("Bluetooth permission denied.");
+                  }
+              }
+
+              private void refreshDevices() {
+                  if (!hasBtPermission()) {
+                      ensurePermission();
+                      return;
+                  }
+
+                  BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                  if (adapter == null) {
+                      status.setText("No Bluetooth adapter.");
+                      return;
+                  }
+
+                  Set<BluetoothDevice> set = adapter.getBondedDevices();
+                  bonded.clear();
+                  bonded.addAll(set);
+
+                  List<String> labels = new ArrayList<>();
+                  int preferred = -1;
+
+                  for (int i = 0; i < bonded.size(); i++) {
+                      BluetoothDevice d = bonded.get(i);
+                      String name = d.getName();
+                      if (name == null) name = "(unnamed)";
+                      labels.add(name + "\n" + d.getAddress());
+
+                      String lower = name.toLowerCase();
+                      if (preferred < 0 &&
+                          (lower.contains("band") ||
+                           lower.contains("xiaomi") ||
+                           lower.contains("m2552") ||
+                           lower.contains("p67"))) {
+                          preferred = i;
+                      }
+                  }
+
+                  ArrayAdapter<String> a = new ArrayAdapter<>(
+                      this,
+                      android.R.layout.simple_spinner_item,
+                      labels
+                  );
+                  a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                  spinner.setAdapter(a);
+                  if (preferred >= 0) spinner.setSelection(preferred);
+
+                  status.setText("Paired devices: " + bonded.size() +
+                                 "\nSelect Smart Band 10 Pro, then AUTO NEGOTIATE.");
+              }
+
+              private void autoNegotiate() {
+                  if (!hasBtPermission()) {
+                      ensurePermission();
+                      return;
+                  }
+
+                  int pos = spinner.getSelectedItemPosition();
+                  if (pos < 0 || pos >= bonded.size()) {
+                      status.setText("Select a paired device first.");
+                      return;
+                  }
+
+                  BluetoothDevice device = bonded.get(pos);
+                  cancelled = false;
+                  disconnectSocket();
+
+                  new Thread(() -> runNegotiation(device), "nivo-spp-session").start();
+              }
+
+              private void runNegotiation(BluetoothDevice device) {
+                  StringBuilder log = new StringBuilder();
+                  BluetoothSocket s = null;
+
+                  try {
+                      // Auto-retry because Mi Fitness / the band may still own the RFCOMM listener.
+                      Throwable last = null;
+                      for (int attempt = 1; attempt <= 6 && !cancelled; attempt++) {
+                          appendLog(log, "Connect attempt " + attempt + "/6…");
+                          try {
+                              s = createChannel5(device);
+                              s.connect();
+                              if (s.isConnected()) {
+                                  appendLog(log, "RFCOMM 5 CONNECTED ✅");
+                                  break;
+                              }
+                          } catch (Throwable t) {
+                              last = t;
+                              appendLog(log, "  failed: " + t.getClass().getSimpleName() +
+                                  " / " + String.valueOf(t.getMessage()));
+                              try { if (s != null) s.close(); } catch (Throwable ignored) {}
+                              s = null;
+                              Thread.sleep(700);
+                          }
+                      }
+
+                      if (s == null || !s.isConnected()) {
+                          throw new Exception("Could not connect after retries", last);
+                      }
+
+                      socket = s;
+                      InputStream in = s.getInputStream();
+                      OutputStream out = s.getOutputStream();
+
+                      drain(in);
+                      appendLog(log, "TX VERSION: " + toHex(VERSION_QUERY));
+                      out.write(VERSION_QUERY);
+                      out.flush();
+
+                      byte[] versionRx = readUntilV1Frame(in, 4000);
+                      appendLog(log, "RX VERSION (" + versionRx.length + "): " +
+                          (versionRx.length == 0 ? "(none)" : toHex(versionRx)));
+
+                      int sppVersion = extractSppVersion(versionRx);
+                      if (sppVersion < 0) {
+                          throw new Exception("No valid SPP version response");
+                      }
+                      appendLog(log, "SPP VERSION = " + sppVersion + " ✅");
+
+                      if (sppVersion < 2) {
+                          appendLog(log, "Device wants SPPv1; stopping safely.");
+                          return;
+                      }
+
+                      byte[] sessionFrame = buildSessionConfigFrame();
+                      drain(in);
+                      appendLog(log, "TX SESSION CONFIG:");
+                      appendLog(log, toHex(sessionFrame));
+
+                      out.write(sessionFrame);
+                      out.flush();
+
+                      byte[] sessionRx = readUntilV2Packet(in, 5000);
+                      appendLog(log, "RX SESSION (" + sessionRx.length + "):");
+                      appendLog(log, sessionRx.length == 0 ? "(none)" : toHex(sessionRx));
+
+                      String parsed = parseSessionResponse(sessionRx);
+                      appendLog(log, parsed);
+
+                  } catch (Throwable t) {
+                      appendLog(log, "FAILED ❌");
+                      appendLog(log, t.getClass().getSimpleName() + ": " +
+                          String.valueOf(t.getMessage()));
+                  } finally {
+                      final String finalLog = log.toString();
+                      runOnUiThread(() -> status.setText(finalLog));
+                  }
+              }
+
+              private void appendLog(StringBuilder log, String line) {
+                  if (log.length() > 0) log.append("\n");
+                  log.append(line);
+                  final String snap = log.toString();
+                  runOnUiThread(() -> status.setText(snap));
+              }
+
+              private byte[] buildSessionConfigFrame() {
+                  int crc = crc16Arc(SESSION_PAYLOAD);
+                  ByteBuffer b = ByteBuffer
+                      .allocate(8 + SESSION_PAYLOAD.length)
+                      .order(ByteOrder.LITTLE_ENDIAN);
+                  b.put((byte)0xA5);
+                  b.put((byte)0xA5);
+                  b.put((byte)0x02);   // SESSION_CONFIG
+                  b.put((byte)0x00);   // sequence 0
+                  b.putShort((short)SESSION_PAYLOAD.length);
+                  b.putShort((short)crc);
+                  b.put(SESSION_PAYLOAD);
+                  return b.array();
+              }
+
+              private int crc16Arc(byte[] payload) {
+                  int crc = 0;
+                  for (byte bb : payload) {
+                      for (int j = 0; j < 8; j++) {
+                          crc <<= 1;
+                          if ((((crc >> 16) & 1) ^ ((bb >> j) & 1)) == 1) {
+                              crc ^= 0x8005;
+                          }
+                      }
+                  }
+                  return Integer.reverse(crc) >>> 16;
+              }
+
+              private byte[] readUntilV1Frame(InputStream in, long timeoutMs) throws Exception {
+                  ByteArrayOutputStream rx = new ByteArrayOutputStream();
+                  long deadline = System.currentTimeMillis() + timeoutMs;
+
+                  while (System.currentTimeMillis() < deadline && !cancelled) {
+                      int a = in.available();
+                      if (a > 0) {
+                          byte[] buf = new byte[Math.min(a, 1024)];
+                          int n = in.read(buf);
+                          if (n > 0) rx.write(buf, 0, n);
+                          byte[] now = rx.toByteArray();
+                          if (hasCompleteV1(now)) return now;
+                      }
+                      Thread.sleep(15);
+                  }
+                  return rx.toByteArray();
+              }
+
+              private boolean hasCompleteV1(byte[] data) {
+                  for (int i = 0; i + 10 < data.length; i++) {
+                      if ((data[i] & 0xff) == 0xBA &&
+                          (data[i+1] & 0xff) == 0xDC &&
+                          (data[i+2] & 0xff) == 0xFE) {
+                          int len = (data[i+5] & 0xff) | ((data[i+6] & 0xff) << 8);
+                          int total = 8 + len;
+                          if (i + total <= data.length &&
+                              (data[i + total - 1] & 0xff) == 0xEF) {
+                              return true;
+                          }
+                      }
+                  }
+                  return false;
+              }
+
+              private int extractSppVersion(byte[] data) {
+                  for (int i = 0; i + 10 < data.length; i++) {
+                      if ((data[i] & 0xff) != 0xBA ||
+                          (data[i+1] & 0xff) != 0xDC ||
+                          (data[i+2] & 0xff) != 0xFE) continue;
+
+                      int len = (data[i+5] & 0xff) | ((data[i+6] & 0xff) << 8);
+                      int total = 8 + len;
+                      if (i + total > data.length) continue;
+
+                      int payloadLen = len - 3;
+                      if ((data[i+3] & 0x0f) == 0 && payloadLen >= 1) {
+                          return data[i+10] & 0xff;
+                      }
+                  }
+                  return -1;
+              }
+
+              private byte[] readUntilV2Packet(InputStream in, long timeoutMs) throws Exception {
+                  ByteArrayOutputStream rx = new ByteArrayOutputStream();
+                  long deadline = System.currentTimeMillis() + timeoutMs;
+
+                  while (System.currentTimeMillis() < deadline && !cancelled) {
+                      int a = in.available();
+                      if (a > 0) {
+                          byte[] buf = new byte[Math.min(a, 2048)];
+                          int n = in.read(buf);
+                          if (n > 0) rx.write(buf, 0, n);
+                          byte[] now = rx.toByteArray();
+                          if (hasCompleteV2(now)) return now;
+                      }
+                      Thread.sleep(15);
+                  }
+                  return rx.toByteArray();
+              }
+
+              private boolean hasCompleteV2(byte[] data) {
+                  for (int i = 0; i + 7 < data.length; i++) {
+                      if ((data[i] & 0xff) == 0xA5 &&
+                          (data[i+1] & 0xff) == 0xA5) {
+                          int payloadLen =
+                              (data[i+4] & 0xff) | ((data[i+5] & 0xff) << 8);
+                          if (i + 8 + payloadLen <= data.length) return true;
+                      }
+                  }
+                  return false;
+              }
+
+              private String parseSessionResponse(byte[] data) {
+                  for (int i = 0; i + 7 < data.length; i++) {
+                      if ((data[i] & 0xff) != 0xA5 ||
+                          (data[i+1] & 0xff) != 0xA5) continue;
+
+                      int type = data[i+2] & 0x0f;
+                      int seq = data[i+3] & 0xff;
+                      int len = (data[i+4] & 0xff) | ((data[i+5] & 0xff) << 8);
+                      int givenCrc = (data[i+6] & 0xff) | ((data[i+7] & 0xff) << 8);
+
+                      if (i + 8 + len > data.length) continue;
+
+                      byte[] payload = new byte[len];
+                      System.arraycopy(data, i+8, payload, 0, len);
+                      int calcCrc = crc16Arc(payload);
+
+                      StringBuilder sb = new StringBuilder();
+                      sb.append("Parsed SPPv2 packet ✅")
+                        .append("\ntype=").append(type)
+                        .append(" seq=").append(seq)
+                        .append(" payloadLen=").append(len)
+                        .append("\nCRC given=0x").append(String.format("%04X", givenCrc))
+                        .append(" calculated=0x").append(String.format("%04X", calcCrc))
+                        .append(givenCrc == calcCrc ? " ✅" : " ❌");
+
+                      if (type == 2 && len >= 1) {
+                          int opcode = payload[0] & 0xff;
+                          sb.append("\nSESSION_CONFIG opcode=").append(opcode);
+                          if (opcode == 2) {
+                              sb.append("\nSPPv2 SESSION ESTABLISHED ✅");
+                              sb.append("\nNEXT: authentication handshake");
+                          }
+                      }
+                      return sb.toString();
+                  }
+
+                  return data.length == 0
+                      ? "No A5 A5 response. Retry AUTO NEGOTIATE once."
+                      : "Bytes received, but no complete SPPv2 packet parsed.";
+              }
+
+              private void drain(InputStream in) throws Exception {
+                  while (in.available() > 0) {
+                      byte[] discard = new byte[Math.min(in.available(), 1024)];
+                      int n = in.read(discard);
+                      if (n < 0) break;
+                  }
+              }
+
+              private String toHex(byte[] data) {
+                  StringBuilder sb = new StringBuilder();
+                  for (byte b : data) sb.append(String.format("%02X ", b & 0xff));
+                  return sb.toString().trim();
+              }
+
+              private BluetoothSocket createChannel5(BluetoothDevice d) throws Exception {
+                  try {
+                      Method m = d.getClass().getMethod("createRfcommSocket", int.class);
+                      Object obj = m.invoke(d, RFCOMM_CHANNEL);
+                      if (obj instanceof BluetoothSocket) return (BluetoothSocket)obj;
+                  } catch (Throwable ignored) {}
+                  return d.createRfcommSocketToServiceRecord(SPP_UUID);
+              }
+
+              private void disconnectSocket() {
+                  BluetoothSocket s = socket;
+                  socket = null;
+                  if (s != null) {
+                      try { s.close(); } catch (Throwable ignored) {}
+                  }
+              }
+
+              @Override
+              protected void onDestroy() {
+                  cancelled = true;
+                  disconnectSocket();
+                  super.onDestroy();
+              }
+          }
+          JAVA
+
+      - name: Build APK
+        working-directory: probe
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Publish APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/nivo-spp-session-probe
+          cp probe/app/build/outputs/apk/debug/app-debug.apk              test-artifacts/nivo-spp-session-probe/Nivo_SPP_Session_Probe.apk
+          sha256sum test-artifacts/nivo-spp-session-probe/Nivo_SPP_Session_Probe.apk
+
+          git pull --rebase origin test/nivo-xiaomi-sender
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-spp-session-probe/Nivo_SPP_Session_Probe.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish SPP session negotiation probe"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_SPP_Session_Probe
+          path: test-artifacts/nivo-spp-session-probe/Nivo_SPP_Session_Probe.apk
