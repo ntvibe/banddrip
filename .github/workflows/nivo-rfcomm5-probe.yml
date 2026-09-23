@@ -1,0 +1,398 @@
+name: Build Nivo RFCOMM5 Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-rfcomm5-probe.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone Android base
+        run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git probe
+
+      - name: Create RFCOMM channel 5 probe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("probe/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"',
+                        'applicationId "com.nivo.rfcommprobe"')
+          p.write_text(s)
+          PY
+
+          cat > probe/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo RFCOMM Probe"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > probe/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:padding="24dp">
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO RFCOMM 5 PROBE"
+                  android:textStyle="bold"
+                  android:textSize="23sp"
+                  android:gravity="center"
+                  android:layout_marginTop="30dp"/>
+
+              <Spinner
+                  android:id="@+id/devices"
+                  android:layout_width="match_parent"
+                  android:layout_height="60dp"
+                  android:layout_marginTop="24dp"/>
+
+              <Button
+                  android:id="@+id/refresh"
+                  android:layout_width="match_parent"
+                  android:layout_height="58dp"
+                  android:text="REFRESH PAIRED DEVICES"
+                  android:layout_marginTop="12dp"/>
+
+              <Button
+                  android:id="@+id/connect"
+                  android:layout_width="match_parent"
+                  android:layout_height="66dp"
+                  android:text="CONNECT RFCOMM CHANNEL 5"
+                  android:textSize="17sp"
+                  android:layout_marginTop="16dp"/>
+
+              <Button
+                  android:id="@+id/disconnect"
+                  android:layout_width="match_parent"
+                  android:layout_height="58dp"
+                  android:text="DISCONNECT"
+                  android:layout_marginTop="12dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Grant Bluetooth permission, then refresh."
+                  android:textIsSelectable="true"
+                  android:textSize="15sp"
+                  android:fontFamily="monospace"
+                  android:layout_marginTop="24dp"/>
+          </LinearLayout>
+          XML
+
+          cat > probe/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.Manifest;
+          import android.bluetooth.BluetoothAdapter;
+          import android.bluetooth.BluetoothDevice;
+          import android.bluetooth.BluetoothSocket;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.widget.ArrayAdapter;
+          import android.widget.Button;
+          import android.widget.Spinner;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+          import androidx.core.app.ActivityCompat;
+
+          import java.io.InputStream;
+          import java.lang.reflect.Method;
+          import java.util.ArrayList;
+          import java.util.List;
+          import java.util.Set;
+          import java.util.UUID;
+
+          public class MainActivity extends AppCompatActivity {
+              private static final int REQ_BT = 1001;
+              private static final int RFCOMM_CHANNEL = 5;
+              private static final UUID SPP_UUID =
+                  UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+
+              private final List<BluetoothDevice> bonded = new ArrayList<>();
+              private Spinner spinner;
+              private TextView status;
+              private BluetoothSocket socket;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  spinner = findViewById(R.id.devices);
+                  status = findViewById(R.id.status);
+                  Button refresh = findViewById(R.id.refresh);
+                  Button connect = findViewById(R.id.connect);
+                  Button disconnect = findViewById(R.id.disconnect);
+
+                  refresh.setOnClickListener(v -> refreshDevices());
+                  connect.setOnClickListener(v -> connectSelected());
+                  disconnect.setOnClickListener(v -> disconnectSocket());
+
+                  ensurePermission();
+              }
+
+              private boolean hasBtPermission() {
+                  return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                      ActivityCompat.checkSelfPermission(
+                          this, Manifest.permission.BLUETOOTH_CONNECT
+                      ) == PackageManager.PERMISSION_GRANTED;
+              }
+
+              private void ensurePermission() {
+                  if (!hasBtPermission() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      ActivityCompat.requestPermissions(
+                          this,
+                          new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                          REQ_BT
+                      );
+                  } else {
+                      refreshDevices();
+                  }
+              }
+
+              @Override
+              public void onRequestPermissionsResult(
+                  int requestCode, String[] permissions, int[] grantResults
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+                  if (requestCode == REQ_BT &&
+                      grantResults.length > 0 &&
+                      grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                      refreshDevices();
+                  } else if (requestCode == REQ_BT) {
+                      status.setText("Bluetooth permission denied.");
+                  }
+              }
+
+              private void refreshDevices() {
+                  if (!hasBtPermission()) {
+                      ensurePermission();
+                      return;
+                  }
+
+                  BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                  if (adapter == null) {
+                      status.setText("No Bluetooth adapter.");
+                      return;
+                  }
+
+                  Set<BluetoothDevice> set = adapter.getBondedDevices();
+                  bonded.clear();
+                  bonded.addAll(set);
+
+                  List<String> labels = new ArrayList<>();
+                  int preferred = -1;
+
+                  for (int i = 0; i < bonded.size(); i++) {
+                      BluetoothDevice d = bonded.get(i);
+                      String name = d.getName();
+                      if (name == null) name = "(unnamed)";
+                      labels.add(name + "\n" + d.getAddress());
+
+                      String lower = name.toLowerCase();
+                      if (preferred < 0 &&
+                          (lower.contains("band") ||
+                           lower.contains("xiaomi") ||
+                           lower.contains("m2552") ||
+                           lower.contains("p67"))) {
+                          preferred = i;
+                      }
+                  }
+
+                  ArrayAdapter<String> a = new ArrayAdapter<>(
+                      this,
+                      android.R.layout.simple_spinner_item,
+                      labels
+                  );
+                  a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                  spinner.setAdapter(a);
+
+                  if (preferred >= 0) spinner.setSelection(preferred);
+
+                  status.setText(
+                      "Paired devices: " + bonded.size() +
+                      "\nSelect the Smart Band 10 Pro."
+                  );
+              }
+
+              private void connectSelected() {
+                  if (!hasBtPermission()) {
+                      ensurePermission();
+                      return;
+                  }
+
+                  int pos = spinner.getSelectedItemPosition();
+                  if (pos < 0 || pos >= bonded.size()) {
+                      status.setText("Select a paired device first.");
+                      return;
+                  }
+
+                  BluetoothDevice device = bonded.get(pos);
+                  disconnectSocket();
+                  status.setText(
+                      "Connecting to " + device.getName() +
+                      "\n" + device.getAddress() +
+                      "\nRFCOMM channel 5…"
+                  );
+
+                  new Thread(() -> {
+                      try {
+                          BluetoothSocket s = createChannel5(device);
+                          s.connect();
+                          socket = s;
+
+                          runOnUiThread(() -> status.setText(
+                              "CONNECTED ✅" +
+                              "\nDevice: " + device.getName() +
+                              "\nRFCOMM channel: 5" +
+                              "\nSecure: " + s.isConnected() +
+                              "\n\nWaiting 3 s for any inbound bytes…"
+                          ));
+
+                          InputStream in = s.getInputStream();
+                          long end = System.currentTimeMillis() + 3000;
+                          int total = 0;
+                          StringBuilder hex = new StringBuilder();
+
+                          while (System.currentTimeMillis() < end && s.isConnected()) {
+                              int avail = in.available();
+                              if (avail > 0) {
+                                  byte[] b = new byte[Math.min(avail, 512)];
+                                  int n = in.read(b);
+                                  if (n > 0) {
+                                      total += n;
+                                      for (int i = 0; i < n && hex.length() < 800; i++) {
+                                          hex.append(String.format("%02X ", b[i] & 0xff));
+                                      }
+                                  }
+                              }
+                              Thread.sleep(50);
+                          }
+
+                          final int received = total;
+                          final String dump = hex.toString();
+                          runOnUiThread(() -> status.setText(
+                              "CONNECTED ✅" +
+                              "\nRFCOMM channel 5 is usable." +
+                              "\nInbound bytes in first 3 s: " + received +
+                              (received > 0 ? "\nHEX: " + dump : "") +
+                              "\n\nDo not send protocol data yet."
+                          ));
+                      } catch (Throwable t) {
+                          runOnUiThread(() -> status.setText(
+                              "CONNECT FAILED ❌" +
+                              "\n" + t.getClass().getSimpleName() +
+                              "\n" + String.valueOf(t.getMessage()) +
+                              "\n\nIf Mi Fitness is connected, force-stop Mi Fitness and retry once."
+                          ));
+                      }
+                  }, "nivo-rfcomm5").start();
+              }
+
+              private BluetoothSocket createChannel5(BluetoothDevice d) throws Exception {
+                  try {
+                      Method m = d.getClass().getMethod("createRfcommSocket", int.class);
+                      Object obj = m.invoke(d, RFCOMM_CHANNEL);
+                      if (obj instanceof BluetoothSocket) return (BluetoothSocket) obj;
+                  } catch (Throwable ignored) {
+                  }
+                  return d.createRfcommSocketToServiceRecord(SPP_UUID);
+              }
+
+              private void disconnectSocket() {
+                  BluetoothSocket s = socket;
+                  socket = null;
+                  if (s != null) {
+                      try { s.close(); } catch (Throwable ignored) {}
+                  }
+              }
+
+              @Override
+              protected void onDestroy() {
+                  disconnectSocket();
+                  super.onDestroy();
+              }
+          }
+          JAVA
+
+      - name: Build APK
+        working-directory: probe
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Publish APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/nivo-rfcomm5-probe
+          cp probe/app/build/outputs/apk/debug/app-debug.apk              test-artifacts/nivo-rfcomm5-probe/Nivo_RFCOMM5_Probe.apk
+          sha256sum test-artifacts/nivo-rfcomm5-probe/Nivo_RFCOMM5_Probe.apk
+
+          git pull --rebase origin test/nivo-xiaomi-sender
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-rfcomm5-probe/Nivo_RFCOMM5_Probe.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish raw RFCOMM channel 5 probe"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_RFCOMM5_Probe
+          path: test-artifacts/nivo-rfcomm5-probe/Nivo_RFCOMM5_Probe.apk
