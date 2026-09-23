@@ -1,0 +1,204 @@
+name: Build Nivo WatchDrip Injector
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-watchdrip-injector.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Create minimal Android app
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git injector
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("injector/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"',
+                        'applicationId "com.nivo.watchdripinjector"')
+          p.write_text(s)
+          PY
+
+          cat > injector/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo WatchDrip Injector"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > injector/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:padding="26dp"
+              android:gravity="center_horizontal">
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO → WATCHDRIP"
+                  android:textStyle="bold"
+                  android:textSize="24sp"
+                  android:gravity="center"
+                  android:layout_marginTop="40dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Sends AAPS-style glucose broadcasts to WatchDrip+"
+                  android:textSize="16sp"
+                  android:gravity="center"
+                  android:layout_marginTop="22dp"
+                  android:layout_marginBottom="30dp"/>
+
+              <Button
+                  android:id="@+id/send111"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND BG 111"
+                  android:textSize="19sp"/>
+
+              <Button
+                  android:id="@+id/send222"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND BG 222"
+                  android:textSize="19sp"
+                  android:layout_marginTop="14dp"/>
+
+              <Button
+                  android:id="@+id/send333"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND BG 333"
+                  android:textSize="19sp"
+                  android:layout_marginTop="14dp"/>
+          </LinearLayout>
+          XML
+
+          cat > injector/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.content.Intent;
+          import android.os.Bundle;
+          import android.widget.Button;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+
+          public class MainActivity extends AppCompatActivity {
+              private static final String ACTION_AAPS_STATUS =
+                  "info.nightscout.androidaps.status";
+              private static final String WATCHDRIP_PACKAGE =
+                  "com.thatguysservice.huami_xdrip";
+
+              private TextView status;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  status = findViewById(R.id.status);
+                  Button b111 = findViewById(R.id.send111);
+                  Button b222 = findViewById(R.id.send222);
+                  Button b333 = findViewById(R.id.send333);
+
+                  b111.setOnClickListener(v -> sendBg(111));
+                  b222.setOnClickListener(v -> sendBg(222));
+                  b333.setOnClickListener(v -> sendBg(333));
+              }
+
+              private void sendBg(int mgdl) {
+                  Intent i = new Intent(ACTION_AAPS_STATUS);
+                  i.setPackage(WATCHDRIP_PACKAGE);
+
+                  long now = System.currentTimeMillis();
+                  i.putExtra("glucoseMgdl", (double) mgdl);
+                  i.putExtra("glucoseTimeStamp", now);
+                  i.putExtra("deltaMgdl", 1.0d);
+                  i.putExtra("slopeArrow", "Flat");
+                  i.putExtra("high", 180.0d);
+                  i.putExtra("low", 70.0d);
+                  i.putExtra("units", "mg/dl");
+
+                  sendBroadcast(i);
+                  status.setText(
+                      "Broadcast sent: " + mgdl +
+                      " mg/dL\n→ WatchDrip+ (" + WATCHDRIP_PACKAGE + ")"
+                  );
+              }
+          }
+          JAVA
+
+      - name: Build APK
+        working-directory: injector
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Publish APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/nivo-watchdrip-injector
+          cp injector/app/build/outputs/apk/debug/app-debug.apk              test-artifacts/nivo-watchdrip-injector/Nivo_WatchDrip_Injector.apk
+          sha256sum test-artifacts/nivo-watchdrip-injector/Nivo_WatchDrip_Injector.apk
+
+          git pull --rebase origin test/nivo-xiaomi-sender
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-watchdrip-injector/Nivo_WatchDrip_Injector.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish Nivo WatchDrip broadcast injector"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_WatchDrip_Injector
+          path: test-artifacts/nivo-watchdrip-injector/Nivo_WatchDrip_Injector.apk
