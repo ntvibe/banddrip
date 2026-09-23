@@ -1,0 +1,505 @@
+name: Build Nivo SPP Version Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-spp-version-probe.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone Android base
+        run: git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git probe
+
+      - name: Create SPP version probe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("probe/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"',
+                        'applicationId "com.nivo.sppversionprobe"')
+          p.write_text(s)
+          PY
+
+          cat > probe/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo SPP Version Probe"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > probe/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO SPP VERSION PROBE"
+                  android:textStyle="bold"
+                  android:textSize="22sp"
+                  android:gravity="center"
+                  android:layout_marginTop="26dp"/>
+
+              <Spinner
+                  android:id="@+id/devices"
+                  android:layout_width="match_parent"
+                  android:layout_height="60dp"
+                  android:layout_marginTop="20dp"/>
+
+              <Button
+                  android:id="@+id/refresh"
+                  android:layout_width="match_parent"
+                  android:layout_height="56dp"
+                  android:text="REFRESH PAIRED DEVICES"/>
+
+              <Button
+                  android:id="@+id/connect"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="CONNECT RFCOMM 5"
+                  android:textSize="18sp"
+                  android:layout_marginTop="14dp"/>
+
+              <Button
+                  android:id="@+id/version"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND SPP VERSION QUERY"
+                  android:textSize="18sp"
+                  android:layout_marginTop="14dp"/>
+
+              <Button
+                  android:id="@+id/disconnect"
+                  android:layout_width="match_parent"
+                  android:layout_height="54dp"
+                  android:text="DISCONNECT"
+                  android:layout_marginTop="12dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Grant Bluetooth permission, refresh, connect."
+                  android:textIsSelectable="true"
+                  android:textSize="14sp"
+                  android:fontFamily="monospace"
+                  android:layout_marginTop="22dp"
+                  android:paddingBottom="40dp"/>
+            </LinearLayout>
+          </ScrollView>
+          XML
+
+          cat > probe/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.Manifest;
+          import android.bluetooth.BluetoothAdapter;
+          import android.bluetooth.BluetoothDevice;
+          import android.bluetooth.BluetoothSocket;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.widget.ArrayAdapter;
+          import android.widget.Button;
+          import android.widget.Spinner;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+          import androidx.core.app.ActivityCompat;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.lang.reflect.Method;
+          import java.util.ArrayList;
+          import java.util.List;
+          import java.util.Set;
+          import java.util.UUID;
+
+          public class MainActivity extends AppCompatActivity {
+              private static final int REQ_BT = 1001;
+              private static final int RFCOMM_CHANNEL = 5;
+              private static final UUID SPP_UUID =
+                  UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+
+              // Xiaomi SPPv1 version query:
+              // BA DC FE | ch=0 | flags=C0 | len=0003 | op=00 | serial=00 | type=00 | EF
+              private static final byte[] VERSION_QUERY = new byte[] {
+                  (byte)0xBA, (byte)0xDC, (byte)0xFE,
+                  0x00, (byte)0xC0, 0x03, 0x00,
+                  0x00, 0x00, 0x00, (byte)0xEF
+              };
+
+              private final List<BluetoothDevice> bonded = new ArrayList<>();
+              private Spinner spinner;
+              private TextView status;
+              private BluetoothSocket socket;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  spinner = findViewById(R.id.devices);
+                  status = findViewById(R.id.status);
+
+                  findViewById(R.id.refresh).setOnClickListener(v -> refreshDevices());
+                  findViewById(R.id.connect).setOnClickListener(v -> connectSelected());
+                  findViewById(R.id.version).setOnClickListener(v -> sendVersionQuery());
+                  findViewById(R.id.disconnect).setOnClickListener(v -> disconnectSocket());
+
+                  ensurePermission();
+              }
+
+              private boolean hasBtPermission() {
+                  return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                      ActivityCompat.checkSelfPermission(
+                          this, Manifest.permission.BLUETOOTH_CONNECT
+                      ) == PackageManager.PERMISSION_GRANTED;
+              }
+
+              private void ensurePermission() {
+                  if (!hasBtPermission() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      ActivityCompat.requestPermissions(
+                          this,
+                          new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                          REQ_BT
+                      );
+                  } else {
+                      refreshDevices();
+                  }
+              }
+
+              @Override
+              public void onRequestPermissionsResult(
+                  int requestCode, String[] permissions, int[] grantResults
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+                  if (requestCode == REQ_BT &&
+                      grantResults.length > 0 &&
+                      grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                      refreshDevices();
+                  } else if (requestCode == REQ_BT) {
+                      status.setText("Bluetooth permission denied.");
+                  }
+              }
+
+              private void refreshDevices() {
+                  if (!hasBtPermission()) {
+                      ensurePermission();
+                      return;
+                  }
+
+                  BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                  if (adapter == null) {
+                      status.setText("No Bluetooth adapter.");
+                      return;
+                  }
+
+                  Set<BluetoothDevice> set = adapter.getBondedDevices();
+                  bonded.clear();
+                  bonded.addAll(set);
+
+                  List<String> labels = new ArrayList<>();
+                  int preferred = -1;
+
+                  for (int i = 0; i < bonded.size(); i++) {
+                      BluetoothDevice d = bonded.get(i);
+                      String name = d.getName();
+                      if (name == null) name = "(unnamed)";
+                      labels.add(name + "\n" + d.getAddress());
+
+                      String lower = name.toLowerCase();
+                      if (preferred < 0 &&
+                          (lower.contains("band") ||
+                           lower.contains("xiaomi") ||
+                           lower.contains("m2552") ||
+                           lower.contains("p67"))) {
+                          preferred = i;
+                      }
+                  }
+
+                  ArrayAdapter<String> a = new ArrayAdapter<>(
+                      this,
+                      android.R.layout.simple_spinner_item,
+                      labels
+                  );
+                  a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                  spinner.setAdapter(a);
+                  if (preferred >= 0) spinner.setSelection(preferred);
+
+                  status.setText("Paired devices: " + bonded.size() +
+                                 "\nSelect Smart Band 10 Pro.");
+              }
+
+              private void connectSelected() {
+                  if (!hasBtPermission()) {
+                      ensurePermission();
+                      return;
+                  }
+
+                  int pos = spinner.getSelectedItemPosition();
+                  if (pos < 0 || pos >= bonded.size()) {
+                      status.setText("Select a paired device first.");
+                      return;
+                  }
+
+                  BluetoothDevice device = bonded.get(pos);
+                  disconnectSocket();
+
+                  status.setText("Connecting RFCOMM channel 5…");
+
+                  new Thread(() -> {
+                      try {
+                          BluetoothSocket s = createChannel5(device);
+                          s.connect();
+                          socket = s;
+
+                          runOnUiThread(() -> status.setText(
+                              "CONNECTED ✅\n" +
+                              device.getName() + "\n" +
+                              "RFCOMM channel 5\n\n" +
+                              "Now press SEND SPP VERSION QUERY."
+                          ));
+                      } catch (Throwable t) {
+                          runOnUiThread(() -> status.setText(
+                              "CONNECT FAILED ❌\n" +
+                              t.getClass().getSimpleName() + "\n" +
+                              String.valueOf(t.getMessage())
+                          ));
+                      }
+                  }, "nivo-connect").start();
+              }
+
+              private void sendVersionQuery() {
+                  BluetoothSocket s = socket;
+                  if (s == null || !s.isConnected()) {
+                      status.setText("Not connected. Connect RFCOMM 5 first.");
+                      return;
+                  }
+
+                  status.setText(
+                      "Sending read-only SPP version query…\n" +
+                      "TX: BA DC FE 00 C0 03 00 00 00 00 EF"
+                  );
+
+                  new Thread(() -> {
+                      try {
+                          InputStream in = s.getInputStream();
+                          OutputStream out = s.getOutputStream();
+
+                          // Drain any stale bytes before the query.
+                          while (in.available() > 0) {
+                              byte[] discard = new byte[Math.min(in.available(), 512)];
+                              if (in.read(discard) < 0) break;
+                          }
+
+                          out.write(VERSION_QUERY);
+                          out.flush();
+
+                          ByteArrayOutputStream rx = new ByteArrayOutputStream();
+                          long deadline = System.currentTimeMillis() + 4000;
+
+                          while (System.currentTimeMillis() < deadline && s.isConnected()) {
+                              int nAvail = in.available();
+                              if (nAvail > 0) {
+                                  byte[] buf = new byte[Math.min(nAvail, 1024)];
+                                  int n = in.read(buf);
+                                  if (n > 0) rx.write(buf, 0, n);
+
+                                  byte[] now = rx.toByteArray();
+                                  if (containsCompleteV1Frame(now)) break;
+                              }
+                              Thread.sleep(20);
+                          }
+
+                          byte[] data = rx.toByteArray();
+                          String hex = toHex(data);
+                          String parsed = parseVersion(data);
+
+                          runOnUiThread(() -> status.setText(
+                              "VERSION QUERY COMPLETE\n" +
+                              "TX: BA DC FE 00 C0 03 00 00 00 00 EF\n" +
+                              "RX bytes: " + data.length + "\n" +
+                              "RX: " + (data.length == 0 ? "(none)" : hex) +
+                              "\n\n" + parsed
+                          ));
+                      } catch (Throwable t) {
+                          runOnUiThread(() -> status.setText(
+                              "VERSION QUERY FAILED ❌\n" +
+                              t.getClass().getSimpleName() + "\n" +
+                              String.valueOf(t.getMessage())
+                          ));
+                      }
+                  }, "nivo-version-query").start();
+              }
+
+              private boolean containsCompleteV1Frame(byte[] data) {
+                  for (int i = 0; i + 10 < data.length; i++) {
+                      if ((data[i] & 0xff) == 0xBA &&
+                          (data[i+1] & 0xff) == 0xDC &&
+                          (data[i+2] & 0xff) == 0xFE) {
+                          int len = (data[i+5] & 0xff) | ((data[i+6] & 0xff) << 8);
+                          int total = 8 + len;
+                          if (i + total <= data.length &&
+                              (data[i + total - 1] & 0xff) == 0xEF) {
+                              return true;
+                          }
+                      }
+                  }
+                  return false;
+              }
+
+              private String parseVersion(byte[] data) {
+                  for (int i = 0; i + 10 < data.length; i++) {
+                      if ((data[i] & 0xff) != 0xBA ||
+                          (data[i+1] & 0xff) != 0xDC ||
+                          (data[i+2] & 0xff) != 0xFE) continue;
+
+                      int len = (data[i+5] & 0xff) | ((data[i+6] & 0xff) << 8);
+                      int total = 8 + len;
+                      if (i + total > data.length) continue;
+
+                      int channel = data[i+3] & 0x0f;
+                      int opcode = data[i+7] & 0xff;
+                      int serial = data[i+8] & 0xff;
+                      int dataType = data[i+9] & 0xff;
+                      int payloadLen = len - 3;
+
+                      StringBuilder result = new StringBuilder();
+                      result.append("Parsed SPPv1 frame ✅")
+                            .append("\nchannel=").append(channel)
+                            .append(" opcode=").append(opcode)
+                            .append(" serial=").append(serial)
+                            .append(" dataType=").append(dataType)
+                            .append(" payloadLen=").append(payloadLen);
+
+                      if (channel == 0 && payloadLen >= 1) {
+                          int version = data[i+10] & 0xff;
+                          result.append("\nSPP VERSION = ").append(version);
+                          if (version >= 2) {
+                              result.append("\n→ NEXT: SPPv2 session config (A5 A5 framing)");
+                          } else {
+                              result.append("\n→ NEXT: stay on SPPv1 framing");
+                          }
+                      }
+                      return result.toString();
+                  }
+
+                  return data.length == 0
+                      ? "No reply. Keep connection open and retry once."
+                      : "Bytes received, but no complete SPPv1 frame parsed.";
+              }
+
+              private String toHex(byte[] data) {
+                  StringBuilder sb = new StringBuilder();
+                  for (byte b : data) sb.append(String.format("%02X ", b & 0xff));
+                  return sb.toString().trim();
+              }
+
+              private BluetoothSocket createChannel5(BluetoothDevice d) throws Exception {
+                  try {
+                      Method m = d.getClass().getMethod("createRfcommSocket", int.class);
+                      Object obj = m.invoke(d, RFCOMM_CHANNEL);
+                      if (obj instanceof BluetoothSocket) return (BluetoothSocket) obj;
+                  } catch (Throwable ignored) {}
+                  return d.createRfcommSocketToServiceRecord(SPP_UUID);
+              }
+
+              private void disconnectSocket() {
+                  BluetoothSocket s = socket;
+                  socket = null;
+                  if (s != null) {
+                      try { s.close(); } catch (Throwable ignored) {}
+                  }
+              }
+
+              @Override
+              protected void onDestroy() {
+                  disconnectSocket();
+                  super.onDestroy();
+              }
+          }
+          JAVA
+
+      - name: Build APK
+        working-directory: probe
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Publish APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/nivo-spp-version-probe
+          cp probe/app/build/outputs/apk/debug/app-debug.apk              test-artifacts/nivo-spp-version-probe/Nivo_SPP_Version_Probe.apk
+          sha256sum test-artifacts/nivo-spp-version-probe/Nivo_SPP_Version_Probe.apk
+
+          git pull --rebase origin test/nivo-xiaomi-sender
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-spp-version-probe/Nivo_SPP_Version_Probe.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish SPP version negotiation probe"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_SPP_Version_Probe
+          path: test-artifacts/nivo-spp-version-probe/Nivo_SPP_Version_Probe.apk
