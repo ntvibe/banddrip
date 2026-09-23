@@ -1,0 +1,569 @@
+name: Build Nivo C9 End-to-End Transport
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/nivo-xiaomi-sender
+    paths:
+      - .github/workflows/nivo-c9-e2e.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/nivo-xiaomi-sender
+          fetch-depth: 0
+
+      - name: Install ARM toolchain
+        shell: bash
+        run: |
+          set -e
+          if ! command -v arm-none-eabi-gcc >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone native framework and Xiaomi Android SDK sample
+        run: |
+          git clone --depth 1 https://github.com/m0tral/MiWatchNativeApps.git native
+          git clone --depth 1 https://github.com/miguelavh/Watchdrip-Xiaomi.git sender
+
+      - name: Write C9 band transport
+        shell: bash
+        run: |
+          cat > native/mb10pro/nivo_c9_transport.c <<'C'
+          #include <stdint.h>
+          #include "platform/miwear_system.h"
+          #include "common/miwear/app.h"
+          #include "common/lvgl/control.h"
+          #include "common/nuttx/syslog.h"
+          #include "common/misc/print.h"
+
+          #define LOG_TAG      "[nivo_c9]"
+          #define APP_TAG      "com.nivo.transport.c9"
+          #define APP_ID       0xC9u
+          #define PAGE_ID      0x00u
+          #define APP_ICON     "/data/nivo_transport_logo_112.png"
+
+          static void *post_timer_id;
+          static void *ui_timer_id;
+          static volatile unsigned g_newdata_count;
+          static lv_obj_t *g_count_label;
+
+          static const char *const count_text[] = {
+              "MESSAGE EVENTS: 0",
+              "MESSAGE EVENTS: 1",
+              "MESSAGE EVENTS: 2",
+              "MESSAGE EVENTS: 3",
+              "MESSAGE EVENTS: 4",
+              "MESSAGE EVENTS: 5",
+              "MESSAGE EVENTS: 6+"
+          };
+
+          static unsigned cap_count(unsigned v)
+          {
+              return v > 6 ? 6 : v;
+          }
+
+          static char *transport_app_get_name(void)
+          {
+              return "Nivo Transport C9";
+          }
+
+          static int transport_page_on_signal(void *page, lv_obj_t *root, void *data)
+          {
+              (void)page; (void)root; (void)data;
+              return 0;
+          }
+
+          static int transport_on_newdata(void)
+          {
+              g_newdata_count++;
+              syslog(LOG_WARN, "%s on_newdata count=%u\n", LOG_TAG, g_newdata_count);
+              return 0;
+          }
+
+          static void ui_timer_cb(lv_timer_t *timer)
+          {
+              (void)timer;
+              if (g_count_label != 0)
+                  lv_label_set_text(g_count_label, count_text[cap_count(g_newdata_count)]);
+          }
+
+          static int transport_page_on_create(void *page, lv_obj_t *root, void *data)
+          {
+              (void)page; (void)data;
+
+              lv_obj_t *title = lv_label_create(root);
+              if (title) {
+                  lv_label_set_text(title, "NIVO TRANSPORT C9");
+                  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 42);
+              }
+
+              lv_obj_t *waiting = lv_label_create(root);
+              if (waiting) {
+                  lv_label_set_text(waiting, "WAITING FOR PHONE");
+                  lv_obj_align(waiting, LV_ALIGN_TOP_MID, 0, 130);
+              }
+
+              g_count_label = lv_label_create(root);
+              if (g_count_label) {
+                  lv_label_set_text(g_count_label, count_text[cap_count(g_newdata_count)]);
+                  lv_obj_align(g_count_label, LV_ALIGN_CENTER, 0, 10);
+              }
+
+              lv_obj_t *hint = lv_label_create(root);
+              if (hint) {
+                  lv_label_set_text(hint, "Press 111 in C9 sender");
+                  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -55);
+              }
+
+              if (ui_timer_id == 0)
+                  ui_timer_id = lv_timer_create(ui_timer_cb, 250, 0);
+
+              return 0;
+          }
+
+          static int transport_page_on_destroy(void *page, lv_obj_t *root, void *data)
+          {
+              (void)page; (void)root; (void)data;
+              if (ui_timer_id != 0) {
+                  lv_timer_delete(ui_timer_id);
+                  ui_timer_id = 0;
+              }
+              g_count_label = 0;
+              return 0;
+          }
+
+          static miwear_app_t g_transport_app = {
+              .proto_app = 0,
+              .field_4   = 0,
+              .name      = APP_TAG,
+              .icon      = APP_ICON,
+              .app_id    = APP_ID,
+              .flags     = 0,
+              .field_14  = 0,
+              .field_18  = 0,
+              .app_get_name = transport_app_get_name,
+              .on_uninstall = 0,
+              .field_24  = 0,
+              .field_28  = 0,
+              .field_2C  = 0,
+              .field_30  = 0,
+              .field_34  = 0,
+              .on_signal = 0,
+              .field_3C  = 0,
+          };
+
+          static miwear_page_t g_transport_page = {
+              .parent_descriptor = 0,
+              .page_name         = "main",
+              .page_id           = PAGE_ID,
+              .app_id            = APP_ID,
+              .flags             = 0,
+              .scheduler_deadline = 0,
+              .scheduler_priority = 0,
+              .async_destroy_state = 0,
+              .lifecycle_state   = 0,
+              .layer             = 1,
+              .page_kind         = 0,
+              .activity_context  = 0,
+              .root_object       = 0,
+              .on_signal         = transport_page_on_signal,
+              .runtime_default_56 = 0,
+              .registry_prev     = 0,
+              .registry_next     = 0,
+              .runtime_parent    = 0,
+              .on_create         = transport_page_on_create,
+              .on_resume         = 0,
+              .on_newdata        = (void *)transport_on_newdata,
+              .on_start          = 0,
+              .on_pause          = 0,
+              .on_stop           = 0,
+              .on_destroy        = transport_page_on_destroy,
+              .on_back           = 0,
+              .on_keyevent       = 0,
+              .get_scroll_obj    = 0,
+          };
+
+          static void register_transport(void)
+          {
+              int existing = app_lookup(APP_ID);
+              int pm_rc = -999;
+
+              if (existing == 0) {
+                  miwear_page_t *pages[] = { &g_transport_page };
+                  pm_rc = g_packagemanager_api->install(&g_transport_app, pages, 1);
+                  syslog(LOG_WARN, "%s install=%d\n", LOG_TAG, pm_rc);
+              } else {
+                  pm_rc = g_packagemanager_api->recover(&g_transport_app);
+                  syslog(LOG_WARN, "%s recover=%d existing=%d\n",
+                         LOG_TAG, pm_rc, existing);
+              }
+
+              int launcher_rc = app_launcher_add(APP_ID);
+              syslog(LOG_WARN, "%s launcher=%d\n", LOG_TAG, launcher_rc);
+          }
+
+          static void timer_callback(lv_timer_t *timer)
+          {
+              (void)timer;
+              if (post_timer_id != 0) {
+                  lv_timer_delete(post_timer_id);
+                  post_timer_id = 0;
+              }
+              register_transport();
+          }
+
+          __attribute__((constructor)) int module_initialize(void)
+          {
+              syslog(LOG_WARN, "%s module loaded\n", LOG_TAG);
+              post_timer_id = lv_timer_create(timer_callback, 500, 0);
+              return 0;
+          }
+
+          __attribute__((destructor, used)) static void module_uninitialize(void)
+          {
+              syslog(LOG_WARN, "%s module unloaded\n", LOG_TAG);
+          }
+          C
+
+      - name: Compile C9 band ELF
+        working-directory: native
+        shell: bash
+        run: |
+          set -euo pipefail
+          arm-none-eabi-gcc             -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16             -ffreestanding -fno-common -fno-builtin -nostdlib             -fno-jump-tables -fno-stack-protector -fno-unwind-tables             -fno-asynchronous-unwind-tables -fdata-sections -fno-function-sections             -Os -I. -Imb10pro -DMB10P_FW_VERSION=3201016             -Wall -Wextra -Werror             -c mb10pro/nivo_c9_transport.c -o nivo_c9_transport.o
+
+          arm-none-eabi-gcc             -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16             -r -T mb10pro/mb10pro.ld             -o nivo_c9_transport_3.201.016.elf nivo_c9_transport.o
+
+          echo "C9 ELF size=$(stat -c%s nivo_c9_transport_3.201.016.elf)"
+          arm-none-eabi-nm -u nivo_c9_transport_3.201.016.elf || true
+          if arm-none-eabi-nm -u nivo_c9_transport_3.201.016.elf | grep -q '__aeabi_'; then
+            echo "Unexpected __aeabi import"
+            exit 1
+          fi
+
+      - name: Patch C9 into proven watchface container
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf c9_work
+          mkdir -p c9_work
+          base64 -d experiments/nivo-transport/Nivo_Transport_MB10Pro_3.201.016_UPLOAD.zip.b64 > c9_work/original.zip
+          unzip -q c9_work/original.zip -d c9_work/pkg
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          p = Path("c9_work/pkg/nivo_transport.bin")
+          data = bytearray(p.read_bytes())
+          new = Path("native/nivo_c9_transport_3.201.016.elf").read_bytes()
+
+          start = data.find(b"\x7fELF")
+          if start < 0:
+              raise SystemExit("Embedded ELF not found")
+
+          e_shoff = struct.unpack_from("<I", data, start+32)[0]
+          e_shentsize = struct.unpack_from("<H", data, start+46)[0]
+          e_shnum = struct.unpack_from("<H", data, start+48)[0]
+          maxend = 0
+          for n in range(e_shnum):
+              off = start + e_shoff + n*e_shentsize
+              sh_type = struct.unpack_from("<I", data, off+4)[0]
+              sh_offset = struct.unpack_from("<I", data, off+16)[0]
+              sh_size = struct.unpack_from("<I", data, off+20)[0]
+              if sh_type != 8:
+                  maxend = max(maxend, sh_offset + sh_size)
+          old_len = max(maxend, e_shoff + e_shentsize*e_shnum)
+
+          print("old slot:", old_len)
+          print("C9 ELF:", len(new))
+          if len(new) > old_len:
+              raise SystemExit(f"C9 ELF {len(new)} exceeds slot {old_len}")
+
+          data[start:start+old_len] = new + b"\x00" * (old_len-len(new))
+          p.write_bytes(data)
+
+          if b"nivo_transport_logo_112.png" not in data:
+              raise SystemExit("logo lost")
+          if b"local lvgl = require" not in data:
+              raise SystemExit("Lua installer lost")
+          PY
+
+          cd c9_work/pkg
+          zip -qr ../Nivo_Transport_C9_MB10Pro_3.201.016_UPLOAD.zip .
+          cd ../..
+          unzip -t c9_work/Nivo_Transport_C9_MB10Pro_3.201.016_UPLOAD.zip
+
+      - name: Convert Android sample to matching C9 sender
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("sender/app/build.gradle")
+          s = p.read_text()
+          start = s.find("    signingConfigs {")
+          if start != -1:
+              end = s.find("    defaultConfig {", start)
+              s = s[:start] + s[end:]
+          s = s.replace("            signingConfig signingConfigs.release\n", "")
+          s = s.replace('applicationId "com.application.watch.watchdrip"',
+                        'applicationId "com.nivo.transport.c9"')
+          p.write_text(s)
+          PY
+
+          cat > sender/app/src/main/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Nivo C9 Sender"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.WatchdripXiaomi">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          cat > sender/app/src/main/res/layout/activity_main.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="26dp">
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="NIVO C9 SENDER"
+                  android:textStyle="bold"
+                  android:textSize="25sp"
+                  android:gravity="center"
+                  android:layout_marginTop="36dp"/>
+
+              <TextView
+                  android:id="@+id/status"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Connecting to Xiaomi wearable service…"
+                  android:textSize="16sp"
+                  android:gravity="center"
+                  android:layout_marginTop="22dp"
+                  android:layout_marginBottom="28dp"/>
+
+              <Button
+                  android:id="@+id/send111"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 111"
+                  android:textSize="20sp"/>
+
+              <Button
+                  android:id="@+id/send222"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 222"
+                  android:textSize="20sp"
+                  android:layout_marginTop="14dp"/>
+
+              <Button
+                  android:id="@+id/send333"
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:text="SEND 333"
+                  android:textSize="20sp"
+                  android:layout_marginTop="14dp"/>
+
+              <Button
+                  android:id="@+id/check"
+                  android:layout_width="match_parent"
+                  android:layout_height="58dp"
+                  android:text="CHECK BAND APP"
+                  android:layout_marginTop="24dp"/>
+            </LinearLayout>
+          </ScrollView>
+          XML
+
+          cat > sender/app/src/main/java/com/application/watch/watchdrip/MainActivity.java <<'JAVA'
+          package com.application.watch.watchdrip;
+
+          import android.os.Bundle;
+          import android.widget.Button;
+          import android.widget.TextView;
+
+          import androidx.appcompat.app.AppCompatActivity;
+
+          import com.xiaomi.xms.wearable.BaseApi;
+          import com.xiaomi.xms.wearable.Status;
+          import com.xiaomi.xms.wearable.Wearable;
+          import com.xiaomi.xms.wearable.node.Node;
+
+          import java.nio.charset.StandardCharsets;
+          import java.util.List;
+
+          public class MainActivity extends AppCompatActivity {
+              private static final String BAND_PACKAGE = "com.nivo.transport.c9";
+
+              private TextView status;
+              private String nodeId;
+
+              private String explain(int code) {
+                  switch (code) {
+                      case 0: return "SUCCESS";
+                      case -1: return "CANCELLED";
+                      case -2: return "TIMEOUT";
+                      case -3: return "INTERRUPTED";
+                      case -4: return "DISCONNECTED";
+                      case -5: return "PACKAGE_NOT_INSTALLED";
+                      case -6: return "SIGNATURE_VERIFY_FAILED";
+                      case -7: return "PERMISSION_DENIED";
+                      case -8: return "APP_NOT_INSTALLED";
+                      default: return "UNKNOWN";
+                  }
+              }
+
+              private void show(String s) {
+                  runOnUiThread(() -> status.setText(s));
+              }
+
+              private String describe(Status st) {
+                  if (st == null) return "null status";
+                  int code = st.getCode();
+                  return code + " (" + explain(code) + ")";
+              }
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  status = findViewById(R.id.status);
+                  Button send111 = findViewById(R.id.send111);
+                  Button send222 = findViewById(R.id.send222);
+                  Button send333 = findViewById(R.id.send333);
+                  Button check = findViewById(R.id.check);
+
+                  send111.setEnabled(false);
+                  send222.setEnabled(false);
+                  send333.setEnabled(false);
+
+                  Wearable.getNodeApi(this).getConnectedNodes(new BaseApi.Callback<List<Node>>() {
+                      @Override
+                      public void onSuccess(List<Node> nodes) {
+                          if (nodes.isEmpty()) {
+                              show("Connected nodes: 0");
+                              return;
+                          }
+                          nodeId = nodes.get(0).getId();
+                          show("Ready — node: " + nodes.get(0).getName());
+                          runOnUiThread(() -> {
+                              send111.setEnabled(true);
+                              send222.setEnabled(true);
+                              send333.setEnabled(true);
+                          });
+                      }
+
+                      @Override
+                      public void onFailure(Status st) {
+                          show("Node query failed: " + describe(st));
+                      }
+                  });
+
+                  send111.setOnClickListener(v -> send("111"));
+                  send222.setOnClickListener(v -> send("222"));
+                  send333.setOnClickListener(v -> send("333"));
+
+                  check.setOnClickListener(v ->
+                      Wearable.getNodeApi(this).isWearAppInstalled(
+                          BAND_PACKAGE,
+                          new BaseApi.Callback<Boolean>() {
+                              @Override
+                              public void onSuccess(Boolean installed) {
+                                  show("Band app installed: " + installed);
+                              }
+                              @Override
+                              public void onFailure(Status st) {
+                                  show("Band app check failed: " + describe(st));
+                              }
+                          })
+                  );
+              }
+
+              private void send(String value) {
+                  if (nodeId == null) {
+                      show("No connected node yet.");
+                      return;
+                  }
+
+                  final String payload = "NIVO|" + value;
+                  show("Sending " + payload + "…");
+
+                  Wearable.getMessageApi(this).sendMessage(
+                      nodeId,
+                      payload.getBytes(StandardCharsets.UTF_8),
+                      st -> show("SEND " + payload + ": " + describe(st))
+                  );
+              }
+          }
+          JAVA
+
+      - name: Build C9 Android sender
+        working-directory: sender
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Prepare outputs
+        run: |
+          mkdir -p test-artifacts/nivo-c9-e2e
+          cp c9_work/Nivo_Transport_C9_MB10Pro_3.201.016_UPLOAD.zip              test-artifacts/nivo-c9-e2e/
+          cp sender/app/build/outputs/apk/debug/app-debug.apk              test-artifacts/nivo-c9-e2e/Nivo_C9_Sender.apk
+          sha256sum test-artifacts/nivo-c9-e2e/*
+
+      - name: Publish C9 kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git pull --rebase origin test/nivo-xiaomi-sender
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f test-artifacts/nivo-c9-e2e/
+          if ! git diff --cached --quiet; then
+            git commit -m "test: publish Nivo C9 end-to-end transport kit"
+            git push origin HEAD:test/nivo-xiaomi-sender
+          fi
+
+      - name: Upload C9 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nivo_C9_End_to_End_Kit
+          path: test-artifacts/nivo-c9-e2e/
