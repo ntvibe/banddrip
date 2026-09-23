@@ -272,6 +272,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git pull --rebase origin test/nivo-xiaomi-sender
           mkdir -p test-artifacts/nivo-c7-clean-probe
           cp c7_work/Nivo_C7_Clean_Probe_MB10Pro_3.201.016_UPLOAD.zip              test-artifacts/nivo-c7-clean-probe/
           cp native/nivo_c7_probe_3.201.016.elf              test-artifacts/nivo-c7-clean-probe/
